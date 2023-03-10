@@ -91,11 +91,11 @@ DATABASE_CONNECTION_REPLICA_NAME = "replica"
 
 DATABASES = {
     DATABASE_CONNECTION_DEFAULT_NAME: dj_database_url.config(
-        default="postgres://sergsche:123321@localhost:5432/amici",
+        default=str(os.environ.get("DEFAULT_DB", '')),
         conn_max_age=DB_CONN_MAX_AGE,
     ),
     DATABASE_CONNECTION_REPLICA_NAME: dj_database_url.config(
-        default="postgres://sergsche:123321@localhost:5432/amici",
+        default=str(os.environ.get("DEFAULT_DB", '')),
         # TODO: We need to add read only user to saleor platform,
         # and we need to update docs.
         # default="postgres://saleor_read_only:saleor@localhost:5432/saleor",
@@ -107,7 +107,7 @@ DATABASE_ROUTERS = ["saleor.core.db_routers.PrimaryReplicaRouter"]
 
 DEFAULT_AUTO_FIELD = "django.db.models.AutoField"
 
-TIME_ZONE = "UTC"
+TIME_ZONE = "Europe/Moscow"
 LANGUAGE_CODE = "en"
 LANGUAGES = CORE_LANGUAGES
 LOCALE_PATHS = [os.path.join(PROJECT_ROOT, "locale")]
@@ -415,7 +415,8 @@ DEFAULT_CURRENCY_CODE_LENGTH = 3
 # Following the recommendation of https://tools.ietf.org/html/rfc5322#section-2.1.1
 DEFAULT_MAX_EMAIL_DISPLAY_NAME_LENGTH = 78
 
-COUNTRIES_OVERRIDE = {"EU": "European Union"}
+COUNTRIES_OVERRIDE = {"EU": "European Union",
+                      "RU": "Россия"}
 
 OPENEXCHANGERATES_API_KEY = os.environ.get("OPENEXCHANGERATES_API_KEY")
 

@@ -95,10 +95,10 @@ def clean_checkout_payment(
         gateway.payment_refund_or_void(
             last_payment, manager, channel_slug=checkout_info.channel.slug
         )
-        raise ValidationError(
-            "Provided payment methods can not cover the checkout's total amount",
-            code=error_code.CHECKOUT_NOT_FULLY_PAID.value,
-        )
+        # raise ValidationError(
+        #     "Provided payment methods can not cover the checkout's total amount",
+        #     code=error_code.CHECKOUT_NOT_FULLY_PAID.value,
+        # )
 
 
 def validate_checkout_email(checkout: models.Checkout):
