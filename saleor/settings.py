@@ -91,11 +91,11 @@ DATABASE_CONNECTION_REPLICA_NAME = "replica"
 
 DATABASES = {
     DATABASE_CONNECTION_DEFAULT_NAME: dj_database_url.config(
-        default=str(os.environ.get("DEFAULT_DB", '')),
+        default=os.environ.get("DEFAULT_DB", ""),
         conn_max_age=DB_CONN_MAX_AGE,
     ),
     DATABASE_CONNECTION_REPLICA_NAME: dj_database_url.config(
-        default=str(os.environ.get("DEFAULT_DB", '')),
+        default=os.environ.get("DEFAULT_DB", ""),
         # TODO: We need to add read only user to saleor platform,
         # and we need to update docs.
         # default="postgres://saleor_read_only:saleor@localhost:5432/saleor",
@@ -141,7 +141,7 @@ EMAIL_USE_SSL = email_config["EMAIL_USE_SSL"]
 
 # If enabled, make sure you have set proper storefront address in ALLOWED_CLIENT_HOSTS.
 ENABLE_ACCOUNT_CONFIRMATION_BY_EMAIL = get_bool_from_env(
-    "ENABLE_ACCOUNT_CONFIRMATION_BY_EMAIL", False
+    "ENABLE_ACCOUNT_CONFIRMATION_BY_EMAIL", True
 )
 
 ENABLE_SSL = get_bool_from_env("ENABLE_SSL", False)
