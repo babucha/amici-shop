@@ -1,17 +1,13 @@
 import datetime
 import uuid
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import (
     TYPE_CHECKING,
     Any,
-    DefaultDict,
-    Dict,
-    Iterable,
-    List,
     Optional,
-    Type,
     Union,
     cast,
 )
@@ -111,12 +107,12 @@ def update_checkout_shipping_method_if_invalid(
 
 
 def get_variants_and_total_quantities(
-    variants: List[ProductVariant],
+    variants: list[ProductVariant],
     lines_data: Iterable[CheckoutLineData],
     quantity_to_update_check=False,
 ):
-    variants_total_quantity_map: DefaultDict[ProductVariant, int] = defaultdict(int)
-    mapped_data: DefaultDict[Optional[str], int] = defaultdict(int)
+    variants_total_quantity_map: defaultdict[ProductVariant, int] = defaultdict(int)
+    mapped_data: defaultdict[Optional[str], int] = defaultdict(int)
 
     if quantity_to_update_check:
         lines_data = filter(lambda d: d.quantity_to_update, lines_data)
@@ -196,7 +192,9 @@ def check_lines_quantity(
         raise ValidationError({"quantity": errors})
 
 
-def validate_variants_available_for_purchase(variants_id: set, channel_id: int):
+def get_not_available_variants_for_purchase(
+    variants_id: set, channel_id: int
+) -> tuple[set[int], set[str]]:
     today = datetime.datetime.now(pytz.UTC)
     is_available_for_purchase = Q(
         available_for_purchase_at__lte=today,
@@ -207,40 +205,62 @@ def validate_variants_available_for_purchase(variants_id: set, channel_id: int):
         is_available_for_purchase
     ).values_list("product__variants__id", flat=True)
     not_available_variants = variants_id.difference(set(available_variants))
+    not_available_graphql_ids = {
+        graphene.Node.to_global_id("ProductVariant", pk)
+        for pk in not_available_variants
+    }
+    return not_available_variants, not_available_graphql_ids
+
+
+def validate_variants_available_for_purchase(
+    variants_id: set,
+    channel_id: int,
+    error_code: str = CheckoutErrorCode.PRODUCT_UNAVAILABLE_FOR_PURCHASE.value,
+):
+    (
+        not_available_variants,
+        not_available_graphql_ids,
+    ) = get_not_available_variants_for_purchase(variants_id, channel_id)
     if not_available_variants:
-        variant_ids = [
-            graphene.Node.to_global_id("ProductVariant", pk)
-            for pk in not_available_variants
-        ]
-        error_code = CheckoutErrorCode.PRODUCT_UNAVAILABLE_FOR_PURCHASE.value
         raise ValidationError(
             {
                 "lines": ValidationError(
                     "Cannot add lines for unavailable for purchase variants.",
                     code=error_code,
-                    params={"variants": variant_ids},
+                    params={"variants": not_available_graphql_ids},
                 )
             }
         )
 
 
-def validate_variants_are_published(variants_id: set, channel_id: int):
+def get_not_published_variants(
+    variants_id: set, channel_id: int
+) -> tuple[set[int], set[str]]:
     published_variants = product_models.ProductChannelListing.objects.filter(
         channel_id=channel_id, product__variants__id__in=variants_id, is_published=True
     ).values_list("product__variants__id", flat=True)
-    not_published_variants = variants_id.difference(set(published_variants))
-    if not_published_variants:
-        variant_ids = [
-            graphene.Node.to_global_id("ProductVariant", pk)
-            for pk in not_published_variants
-        ]
-        error_code = CheckoutErrorCode.PRODUCT_NOT_PUBLISHED.value
+    not_published_ids = variants_id.difference(set(published_variants))
+    not_published_graphql_ids = {
+        graphene.Node.to_global_id("ProductVariant", pk) for pk in not_published_ids
+    }
+    return not_published_ids, not_published_graphql_ids
+
+
+def validate_variants_are_published(
+    variants_id: set,
+    channel_id: int,
+    error_code: str = CheckoutErrorCode.PRODUCT_NOT_PUBLISHED.value,
+):
+    not_published_ids, not_published_graphql_ids = get_not_published_variants(
+        variants_id, channel_id
+    )
+    if not_published_ids:
         raise ValidationError(
             {
                 "lines": ValidationError(
                     "Cannot add lines for unpublished variants.",
                     code=error_code,
-                    params={"variants": variant_ids},
+                    params={"variants": not_published_graphql_ids},
                 )
             }
         )
@@ -272,7 +292,7 @@ def get_checkout_by_token(
 
 
 def get_checkout(
-    mutation_class: Type["BaseMutation"],
+    mutation_class: type["BaseMutation"],
     info: ResolveInfo,
     checkout_id: Optional[str] = None,
     token: Optional[uuid.UUID] = None,
@@ -314,15 +334,15 @@ def get_checkout(
 
 
 def group_lines_input_on_add(
-    lines: List[Dict[str, Any]], existing_lines_info=None
-) -> List[CheckoutLineData]:
+    lines: list[dict[str, Any]], existing_lines_info=None
+) -> list[CheckoutLineData]:
     """Return list od CheckoutLineData objects.
 
     Lines data provided in CheckoutLineInput will be grouped depending on
     provided parameters.
     """
-    grouped_checkout_lines_data: List[CheckoutLineData] = []
-    checkout_lines_data_map: Dict[str, CheckoutLineData] = defaultdict(CheckoutLineData)
+    grouped_checkout_lines_data: list[CheckoutLineData] = []
+    checkout_lines_data_map: dict[str, CheckoutLineData] = defaultdict(CheckoutLineData)
 
     for line in lines:
         variant_id = cast(str, line.get("variant_id"))
@@ -380,16 +400,16 @@ def group_lines_input_on_add(
 
 
 def group_lines_input_data_on_update(
-    lines: List[Dict[str, Any]], existing_lines_info=None
-) -> List[CheckoutLineData]:
+    lines: list[dict[str, Any]], existing_lines_info=None
+) -> list[CheckoutLineData]:
     """Return list od CheckoutLineData objects.
 
     This function is used in CheckoutLinesUpdate mutation.
     Lines data provided in CheckoutLineUpdateInput will be grouped depending on
     provided parameters.
     """
-    grouped_checkout_lines_data: List[CheckoutLineData] = []
-    checkout_lines_data_map: Dict[str, CheckoutLineData] = defaultdict(CheckoutLineData)
+    grouped_checkout_lines_data: list[CheckoutLineData] = []
+    checkout_lines_data_map: dict[str, CheckoutLineData] = defaultdict(CheckoutLineData)
 
     for line in lines:
         variant_id = cast(str, line.get("variant_id"))
@@ -439,7 +459,7 @@ def check_permissions_for_custom_prices(app, lines):
 
 
 def find_line_id_when_variant_parameter_used(
-    variant_db_id: str, lines_info: List[CheckoutLineInfo]
+    variant_db_id: str, lines_info: list[CheckoutLineInfo]
 ):
     """Return line id when variantId parameter was used.
 
@@ -456,7 +476,7 @@ def find_line_id_when_variant_parameter_used(
     # if same variant occur in multiple lines `lineId` parameter have to be used
     if len(line_info) > 1:
         message = (
-            "Variant occurs in multiple lines. Use `lineId` instead " "of `variantId`."
+            "Variant occurs in multiple lines. Use `lineId` instead of `variantId`."
         )
         variant_global_id = graphene.Node.to_global_id("ProductVariant", variant_db_id)
 
@@ -474,7 +494,7 @@ def find_line_id_when_variant_parameter_used(
 
 
 def find_variant_id_when_line_parameter_used(
-    line_db_id: str, lines_info: List[CheckoutLineInfo]
+    line_db_id: str, lines_info: list[CheckoutLineInfo]
 ):
     """Return variant id when lineId parameter was used."""
     if not lines_info:

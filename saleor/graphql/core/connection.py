@@ -1,14 +1,11 @@
 import json
+from collections.abc import Iterable
 from decimal import Decimal, InvalidOperation
 from typing import (
     TYPE_CHECKING,
     Any,
     Callable,
-    Dict,
-    Iterable,
-    List,
     Optional,
-    Tuple,
     Union,
 )
 
@@ -27,13 +24,13 @@ from ...channel.exceptions import ChannelNotDefined, NoDefaultChannel
 from ..channel import ChannelContext, ChannelQsContext
 from ..channel.utils import get_default_channel_slug_or_graphql_error
 from ..core.enums import OrderDirection
-from ..core.types import NonNullList
+from ..core.types import BaseConnection, NonNullList
 from ..utils.sorting import sort_queryset_for_connection
 
 if TYPE_CHECKING:
     from ..core import ResolveInfo
 
-ConnectionArguments = Dict[str, Any]
+ConnectionArguments = dict[str, Any]
 
 EPSILON = Decimal("0.000001")
 FILTERS_NAME = "_FILTERS_NAME"
@@ -49,7 +46,7 @@ def to_global_cursor(values):
     return base64(json.dumps(values))
 
 
-def from_global_cursor(cursor) -> List[str]:
+def from_global_cursor(cursor) -> list[str]:
     values = unbase64(cursor)
     return json.loads(values)
 
@@ -67,7 +64,7 @@ def get_field_value(instance: DjangoModel, field_name: str):
 
 
 def _prepare_filter_by_rank_expression(
-    cursor: List[str],
+    cursor: list[str],
     sorting_direction: str,
     coerce_id: Callable[[str], Any],
 ) -> Q:
@@ -94,11 +91,11 @@ def _prepare_filter_by_rank_expression(
 def _prepare_filter_expression(
     field_name: str,
     index: int,
-    cursor: List[str],
-    sorting_fields: List[str],
+    cursor: list[str],
+    sorting_fields: list[str],
     sorting_direction: str,
-) -> Tuple[Q, Dict[str, Union[str, bool]]]:
-    field_expression: Dict[str, Union[str, bool]] = {}
+) -> tuple[Q, dict[str, Union[str, bool]]]:
+    field_expression: dict[str, Union[str, bool]] = {}
     extra_expression = Q()
     for cursor_id, cursor_value in enumerate(cursor[:index]):
         field_expression[sorting_fields[cursor_id]] = cursor_value
@@ -115,8 +112,8 @@ def _prepare_filter_expression(
 
 
 def _prepare_filter(
-    cursor: List[str],
-    sorting_fields: List[str],
+    cursor: list[str],
+    sorting_fields: list[str],
     sorting_direction: str,
     coerce_id: Callable[[str], Any],
 ) -> Q:
@@ -546,7 +543,7 @@ def where_filter_qs(iterable, args, filterset_class, filter_input, request):
         queryset = iterable
 
     if and_filter_input:
-        queryset = _handle_add_filter_input(
+        queryset = _handle_and_filter_input(
             and_filter_input, queryset, args, filterset_class, request
         )
 
@@ -562,16 +559,26 @@ def where_filter_qs(iterable, args, filterset_class, filter_input, request):
     #     )
 
     if filter_input:
-        queryset &= filter_qs(iterable, args, filterset_class, filter_input, request)
+        qs_to_combine = filter_qs(
+            iterable, args, filterset_class, filter_input, request
+        )
+        if isinstance(qs_to_combine, ChannelQsContext):
+            queryset &= qs_to_combine.qs
+
+        else:
+            queryset &= qs_to_combine
+
+    if isinstance(iterable, ChannelQsContext):
+        return ChannelQsContext(queryset, iterable.channel_slug)
 
     return queryset
 
 
-def contains_filter_operator(input: Dict[str, Union[dict, str]]):
+def contains_filter_operator(input: dict[str, Union[dict, str]]):
     return any([operator in input for operator in ["AND", "OR", "NOT"]])
 
 
-def _handle_add_filter_input(filter_input, queryset, args, filterset_class, request):
+def _handle_and_filter_input(filter_input, queryset, args, filterset_class, request):
     for input in filter_input:
         if contains_filter_operator(input):
             # when the input contains the operator run the where_filter_qs method again
@@ -608,7 +615,7 @@ def _handle_or_filter_input(filter_input, queryset, args, filterset_class, reque
 #     return queryset
 
 
-class NonNullConnection(Connection):
+class NonNullConnection(BaseConnection):
     class Meta:
         abstract = True
 
@@ -631,6 +638,7 @@ class NonNullConnection(Connection):
         edge_name = cls.Edge._meta.name
         edge_bases = (EdgeBase, graphene.ObjectType)
         edge = type(edge_name, edge_bases, {})
+        edge.doc_category = options.get("doc_category")  # type: ignore[attr-defined]
         cls.Edge = edge
 
         # Override the `edges` field to make it non-null list

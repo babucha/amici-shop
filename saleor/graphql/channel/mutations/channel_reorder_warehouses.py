@@ -1,5 +1,4 @@
 from collections import defaultdict
-from typing import DefaultDict
 
 import graphene
 from django.core.exceptions import ValidationError
@@ -8,7 +7,8 @@ from ....channel.error_codes import ChannelErrorCode
 from ....core.tracing import traced_atomic_transaction
 from ....permission.enums import ChannelPermissions
 from ...core import ResolveInfo
-from ...core.descriptions import ADDED_IN_37, PREVIEW_FEATURE
+from ...core.descriptions import ADDED_IN_37
+from ...core.doc_category import DOC_CATEGORY_CHANNELS
 from ...core.inputs import ReorderInput
 from ...core.mutations import BaseMutation
 from ...core.types import ChannelError, NonNullList
@@ -36,9 +36,8 @@ class ChannelReorderWarehouses(BaseMutation):
         )
 
     class Meta:
-        description = (
-            "Reorder the warehouses of a channel." + ADDED_IN_37 + PREVIEW_FEATURE
-        )
+        description = "Reorder the warehouses of a channel." + ADDED_IN_37
+        doc_category = DOC_CATEGORY_CHANNELS
         permissions = (ChannelPermissions.MANAGE_CHANNELS,)
         error_type_class = ChannelError
 
@@ -90,7 +89,7 @@ class ChannelReorderWarehouses(BaseMutation):
             str(warehouse_data["warehouse_id"]): warehouse_data["id"]
             for warehouse_data in warehouses_m2m.values("id", "warehouse_id")
         }
-        operations: DefaultDict[str, int] = defaultdict(int)
+        operations: defaultdict[str, int] = defaultdict(int)
         for warehouse_pk, move in zip(warehouse_pks, moves):
             warehouse_m2m_id = warehouse_id_to_warehouse_m2m_id[warehouse_pk]
             operations[warehouse_m2m_id] += move.sort_order

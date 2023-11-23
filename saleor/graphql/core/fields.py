@@ -3,15 +3,43 @@ from json import JSONDecodeError
 from typing import Optional
 
 import graphene
+from django.conf import settings
 from graphene.relay import Connection, is_node
 from graphql import GraphQLError
 
 from ...permission.utils import message_one_of_permissions_required
 from ..decorators import one_of_permissions_required
 from .connection import FILTERS_NAME, FILTERSET_CLASS, WHERE_FILTERSET_CLASS, WHERE_NAME
+from .utils import WebhookEventInfo, message_webhook_events
 
 
-class PermissionsField(graphene.Field):
+class BaseField(graphene.Field):
+    description: Optional[str]
+    doc_category: Optional[str]
+    webhook_events_info: Optional[list[WebhookEventInfo]]
+
+    def __init__(self, *args, **kwargs):
+        auto_webhook_events_info_message = kwargs.pop(
+            "auto_webhook_events_info_message", True
+        )
+        self.doc_category = kwargs.pop("doc_category", None)
+        self.webhook_events_info = kwargs.pop("webhook_events_info", None)
+
+        super().__init__(*args, **kwargs)
+
+        if self.webhook_events_info and auto_webhook_events_info_message:
+            description = self.description or ""
+            description += message_webhook_events(self.webhook_events_info)
+            self.description = description
+
+    def get_resolver(self, parent_resolver):
+        resolver = self.resolver or parent_resolver
+        setattr(resolver, "doc_category", self.doc_category)
+        setattr(resolver, "webhook_events_info", self.webhook_events_info)
+        return resolver
+
+
+class PermissionsField(BaseField):
     description: Optional[str]
 
     def __init__(self, *args, **kwargs):
@@ -22,7 +50,7 @@ class PermissionsField(graphene.Field):
             f"{self.permissions}"
         )
 
-        super(PermissionsField, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         if auto_permission_message and self.permissions:
             permissions_msg = message_one_of_permissions_required(self.permissions)
             description = self.description or ""
@@ -32,6 +60,7 @@ class PermissionsField(graphene.Field):
         resolver = self.resolver or parent_resolver
         if self.permissions:
             resolver = one_of_permissions_required(self.permissions)(resolver)
+        resolver = super().get_resolver(resolver)
         return resolver
 
 
@@ -57,17 +86,31 @@ class ConnectionField(PermissionsField):
         )
         kwargs.setdefault(
             "first",
-            graphene.Int(description="Return the first n elements from the list."),
+            graphene.Int(
+                description=(
+                    "Retrieve the first n elements from the list. "
+                    "Note that the system only allows fetching "
+                    f"a maximum of {settings.GRAPHQL_PAGINATION_LIMIT} "
+                    "objects in a single query."
+                ),
+            ),
         )
         kwargs.setdefault(
             "last",
-            graphene.Int(description="Return the last n elements from the list."),
+            graphene.Int(
+                description=(
+                    "Retrieve the last n elements from the list. "
+                    "Note that the system only allows fetching "
+                    f"a maximum of {settings.GRAPHQL_PAGINATION_LIMIT} "
+                    "objects in a single query."
+                )
+            ),
         )
         super().__init__(type_, *args, **kwargs)
 
     @property
     def type(self):
-        type = super(ConnectionField, self).type
+        type = super().type
         connection_type = type
         if isinstance(type, graphene.NonNull):
             connection_type = type.of_type

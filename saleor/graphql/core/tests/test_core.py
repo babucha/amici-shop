@@ -13,6 +13,7 @@ from micawber import ProviderException, ProviderRegistry
 from ....core.utils.validators import get_oembed_data
 from ....product import ProductMediaTypes
 from ....product.models import Product, ProductChannelListing
+from ....thumbnail import FILE_NAME_MAX_LENGTH
 from ...tests.utils import get_graphql_content, get_graphql_content_from_response
 from ...utils import requestor_is_superuser
 from ...utils.filters import filter_range_field, reporting_period_to_date
@@ -162,13 +163,13 @@ class PermissionEnumForTests(enum.Enum):
 
 @patch("graphene.types.mutation.Mutation.__init_subclass_with_meta__")
 @pytest.mark.parametrize(
-    "should_fail,permissions_value",
-    (
+    ("should_fail", "permissions_value"),
+    [
         (False, (PermissionEnumForTests.TEST,)),
         (True, PermissionEnumForTests.TEST),
         (True, 123),
         (True, ("TEST",)),
-    ),
+    ],
 )
 def test_mutation_invalid_permission_in_meta(_mocked, should_fail, permissions_value):
     def _run_test():
@@ -187,7 +188,7 @@ def test_mutation_invalid_permission_in_meta(_mocked, should_fail, permissions_v
 
 
 @pytest.mark.parametrize(
-    "value, count, product_indexes",
+    ("value", "count", "product_indexes"),
     [
         ({"lte": 50, "gte": 25}, 1, [2]),
         ({"lte": 25}, 2, [0, 1]),
@@ -243,7 +244,7 @@ def test_requestor_is_superuser_for_app(app):
 
 @pytest.mark.vcr
 @pytest.mark.parametrize(
-    "url, expected_media_type",
+    ("url", "expected_media_type"),
     [
         (
             "http://www.youtube.com/watch?v=dQw4w9WgXcQ",
@@ -302,6 +303,35 @@ def test_add_hash_to_file_name(image, media_root):
     file_name, format = os.path.splitext(image._name)
     assert image._name.startswith(file_name)
     assert image._name.endswith(format)
+
+
+def test_short_file_name_is_not_trimmed(image, media_root):
+    image._name = "image"
+    previous_file_name = image._name
+    assert len(previous_file_name) < FILE_NAME_MAX_LENGTH
+
+    add_hash_to_file_name(image)
+
+    assert previous_file_name != image._name
+    file_name, format = os.path.splitext(image._name)
+    assert image._name.startswith(file_name)
+    assert image._name.endswith(format)
+    assert len(image._name.split("_")[0]) < FILE_NAME_MAX_LENGTH
+
+
+def test_long_file_name_is_trimmed(image, media_root):
+    image._name = "2Fvar2Ffolders2Fbj2F61gtb14j7rz474yd15tnkzjh0000gn2FT2Fa"
+    previous_file_name = image._name
+    assert len(previous_file_name) > FILE_NAME_MAX_LENGTH
+
+    add_hash_to_file_name(image)
+
+    assert previous_file_name != image._name
+    file_name, format = os.path.splitext(image._name)
+    assert image._name.startswith(file_name)
+    assert image._name.startswith(file_name[:FILE_NAME_MAX_LENGTH])
+    assert image._name.endswith(format)
+    assert len(image._name.split("_")[0]) == FILE_NAME_MAX_LENGTH
 
 
 def test_external_reference_to_global_id(product):

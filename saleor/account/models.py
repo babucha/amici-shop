@@ -1,5 +1,6 @@
+from collections.abc import Iterable
 from functools import partial
-from typing import Iterable, Union
+from typing import Union
 from uuid import uuid4
 
 from django.conf import settings
@@ -20,6 +21,7 @@ from ..core.utils.json_serializer import CustomJsonEncoder
 from ..order.models import Order
 from ..permission.enums import AccountPermissions, BasePermissionEnum, get_permissions
 from ..permission.models import Permission, PermissionsMixin, _user_has_perm
+from ..site.models import SiteSettings
 from . import CustomerEvents
 from .validators import validate_possible_number
 
@@ -166,9 +168,12 @@ class User(
     )
     is_staff = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
+    is_confirmed = models.BooleanField(default=True)
+    last_confirm_email_request = models.DateTimeField(null=True, blank=True)
     note = models.TextField(null=True, blank=True)
     date_joined = models.DateTimeField(default=timezone.now, editable=False)
     updated_at = models.DateTimeField(auto_now=True, db_index=True)
+    last_password_reset_request = models.DateTimeField(null=True, blank=True)
     default_shipping_address = models.ForeignKey(
         Address, related_name="+", null=True, blank=True, on_delete=models.SET_NULL
     )
@@ -234,15 +239,15 @@ class User(
             self._effective_permissions = get_permissions()
             if not self.is_superuser:
                 UserPermission = User.user_permissions.through
-                user_permission_queryset = UserPermission.objects.filter(
+                user_permission_queryset = UserPermission._default_manager.filter(
                     user_id=self.pk
                 ).values("permission_id")
 
                 UserGroup = User.groups.through
                 GroupPermission = Group.permissions.through
-                user_group_queryset = UserGroup.objects.filter(user_id=self.pk).values(
-                    "group_id"
-                )
+                user_group_queryset = UserGroup._default_manager.filter(
+                    user_id=self.pk
+                ).values("group_id")
                 group_permission_queryset = GroupPermission.objects.filter(
                     Exists(user_group_queryset.filter(group_id=OuterRef("group_id")))
                 ).values("permission_id")
@@ -302,6 +307,13 @@ class User(
             for perm in perm_list
         ]
         return super().has_perms(perm_list, obj)
+
+    def can_login(self, site_settings: SiteSettings):
+        return self.is_active and (
+            site_settings.allow_login_without_confirmation
+            or not site_settings.enable_account_confirmation_by_email
+            or self.is_confirmed
+        )
 
 
 class CustomerNote(models.Model):
@@ -395,6 +407,8 @@ class Group(models.Model):
         verbose_name="permissions",
         blank=True,
     )
+    restricted_access_to_channels = models.BooleanField(default=False)
+    channels = models.ManyToManyField("channel.Channel", blank=True)
 
     objects = GroupManager()
 

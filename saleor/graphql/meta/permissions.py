@@ -1,4 +1,4 @@
-from typing import Any, Callable, Dict, List, Union
+from typing import Any, Callable, Union
 
 from django.core.exceptions import ValidationError
 from django.db.models import Exists, OuterRef
@@ -14,6 +14,7 @@ from ...permission.enums import (
     AccountPermissions,
     AppPermission,
     BasePermissionEnum,
+    ChannelPermissions,
     CheckoutPermissions,
     DiscountPermissions,
     GiftcardPermissions,
@@ -25,6 +26,7 @@ from ...permission.enums import (
     ProductPermissions,
     ProductTypePermissions,
     ShippingPermissions,
+    SitePermissions,
 )
 from ...site import models as site_models
 from ...warehouse import models as warehouse_models
@@ -33,13 +35,13 @@ from ..core import ResolveInfo
 from ..core.utils import from_global_id_or_error
 
 
-def no_permissions(_info: ResolveInfo, _object_pk: Any) -> List[BasePermissionEnum]:
+def no_permissions(_info: ResolveInfo, _object_pk: Any) -> list[BasePermissionEnum]:
     return []
 
 
 def public_user_permissions(
     info: ResolveInfo, user_pk: int
-) -> List[BasePermissionEnum]:
+) -> list[BasePermissionEnum]:
     """Resolve permission for access to public metadata for user.
 
     Customer have access to own public metadata.
@@ -64,7 +66,7 @@ def public_user_permissions(
 
 def private_user_permissions(
     _info: ResolveInfo, user_pk: int
-) -> List[BasePermissionEnum]:
+) -> list[BasePermissionEnum]:
     user = account_models.User.objects.filter(pk=user_pk).first()
     if not user:
         raise PermissionDenied()
@@ -75,7 +77,7 @@ def private_user_permissions(
 
 def public_address_permissions(
     info: ResolveInfo, address_pk: int
-) -> List[BasePermissionEnum]:
+) -> list[BasePermissionEnum]:
     """Resolve permission for access to public metadata for user addresses.
 
     Customer have access to the public metadata of their own addresses.
@@ -106,21 +108,19 @@ def public_address_permissions(
 
     if address.user_addresses.filter(Exists(staff_users.filter(id=OuterRef("id")))):
         return [AccountPermissions.MANAGE_STAFF]
-
-    if (
-        warehouse_models.Warehouse.objects.filter(address_id=address.id).exists()
-        or site_models.SiteSettings.objects.filter(
-            company_address_id=address.id
-        ).exists()
-    ):
-        raise PermissionDenied()
+    elif warehouse_models.Warehouse.objects.filter(address_id=address.id).exists():
+        return [ProductPermissions.MANAGE_PRODUCTS]
+    elif site_models.SiteSettings.objects.filter(
+        company_address_id=address.id
+    ).exists():
+        return [SitePermissions.MANAGE_SETTINGS]
 
     return [AccountPermissions.MANAGE_USERS]
 
 
 def private_address_permissions(
     _info: ResolveInfo, address_pk: int
-) -> List[BasePermissionEnum]:
+) -> list[BasePermissionEnum]:
     address = (
         account_models.Address.objects.filter(pk=address_pk)
         .prefetch_related("user_addresses")
@@ -149,31 +149,31 @@ def private_address_permissions(
 
 def product_permissions(
     _info: ResolveInfo, _object_pk: Any
-) -> List[BasePermissionEnum]:
+) -> list[BasePermissionEnum]:
     return [ProductPermissions.MANAGE_PRODUCTS]
 
 
 def product_type_permissions(
     _info: ResolveInfo, _object_pk: Any
-) -> List[BasePermissionEnum]:
+) -> list[BasePermissionEnum]:
     return [ProductTypePermissions.MANAGE_PRODUCT_TYPES_AND_ATTRIBUTES]
 
 
-def order_permissions(_info: ResolveInfo, _object_pk: Any) -> List[BasePermissionEnum]:
+def order_permissions(_info: ResolveInfo, _object_pk: Any) -> list[BasePermissionEnum]:
     return [OrderPermissions.MANAGE_ORDERS]
 
 
 def invoice_permissions(
     _info: ResolveInfo, _object_pk: Any
-) -> List[BasePermissionEnum]:
+) -> list[BasePermissionEnum]:
     return [OrderPermissions.MANAGE_ORDERS]
 
 
-def menu_permissions(_info: ResolveInfo, _object_pk: Any) -> List[BasePermissionEnum]:
+def menu_permissions(_info: ResolveInfo, _object_pk: Any) -> list[BasePermissionEnum]:
     return [MenuPermissions.MANAGE_MENUS]
 
 
-def app_permissions(info: ResolveInfo, object_pk: str) -> List[BasePermissionEnum]:
+def app_permissions(info: ResolveInfo, object_pk: str) -> list[BasePermissionEnum]:
     auth_token = info.context.decoded_auth_token or {}
     app = get_app_promise(info.context).get()
     app_id: Union[str, int, None]
@@ -188,26 +188,32 @@ def app_permissions(info: ResolveInfo, object_pk: str) -> List[BasePermissionEnu
 
 def private_app_permssions(
     info: ResolveInfo, object_pk: str
-) -> List[BasePermissionEnum]:
+) -> list[BasePermissionEnum]:
     app = get_app_promise(info.context).get()
     if app and app.pk == int(object_pk):
         return []
     return [AppPermission.MANAGE_APPS]
 
 
+def channel_permissions(
+    _info: ResolveInfo, _object_pk: Any
+) -> list[BasePermissionEnum]:
+    return [ChannelPermissions.MANAGE_CHANNELS]
+
+
 def checkout_permissions(
     _info: ResolveInfo, _object_pk: Any
-) -> List[BasePermissionEnum]:
+) -> list[BasePermissionEnum]:
     return [CheckoutPermissions.MANAGE_CHECKOUTS]
 
 
-def page_permissions(_info: ResolveInfo, _object_pk: Any) -> List[BasePermissionEnum]:
+def page_permissions(_info: ResolveInfo, _object_pk: Any) -> list[BasePermissionEnum]:
     return [PagePermissions.MANAGE_PAGES]
 
 
 def page_type_permissions(
     _info: ResolveInfo, _object_pk: Any
-) -> List[BasePermissionEnum]:
+) -> list[BasePermissionEnum]:
     return [PageTypePermissions.MANAGE_PAGE_TYPES_AND_ATTRIBUTES]
 
 
@@ -221,19 +227,19 @@ def attribute_permissions(_info: ResolveInfo, attribute_pk: int):
 
 def shipping_permissions(
     _info: ResolveInfo, _object_pk: Any
-) -> List[BasePermissionEnum]:
+) -> list[BasePermissionEnum]:
     return [ShippingPermissions.MANAGE_SHIPPING]
 
 
 def discount_permissions(
     _info: ResolveInfo, _object_pk: Any
-) -> List[BasePermissionEnum]:
+) -> list[BasePermissionEnum]:
     return [DiscountPermissions.MANAGE_DISCOUNTS]
 
 
 def public_payment_permissions(
     info: ResolveInfo, payment_pk: int
-) -> List[BasePermissionEnum]:
+) -> list[BasePermissionEnum]:
     context_user = info.context.user
     app = get_app_promise(info.context).get()
     if app or (context_user and context_user.is_staff):
@@ -245,7 +251,7 @@ def public_payment_permissions(
 
 def private_payment_permissions(
     info: ResolveInfo, _object_pk: Any
-) -> List[BasePermissionEnum]:
+) -> list[BasePermissionEnum]:
     app = get_app_promise(info.context).get()
     if app is not None or (info.context.user and info.context.user.is_staff):
         return [PaymentPermissions.HANDLE_PAYMENTS]
@@ -254,24 +260,29 @@ def private_payment_permissions(
 
 def gift_card_permissions(
     _info: ResolveInfo, _object_pk: Any
-) -> List[BasePermissionEnum]:
+) -> list[BasePermissionEnum]:
     return [GiftcardPermissions.MANAGE_GIFT_CARD]
 
 
-def tax_permissions(_info: ResolveInfo, _object_pk: int) -> List[BasePermissionEnum]:
+def tax_permissions(_info: ResolveInfo, _object_pk: int) -> list[BasePermissionEnum]:
     return [
         CheckoutPermissions.HANDLE_TAXES,
         CheckoutPermissions.MANAGE_TAXES,
     ]
 
 
-PUBLIC_META_PERMISSION_MAP: Dict[
-    str, Callable[[ResolveInfo, Any], List[BasePermissionEnum]]
+def site_permissions(_info: ResolveInfo, _object_pk: Any) -> list[BasePermissionEnum]:
+    return [SitePermissions.MANAGE_SETTINGS]
+
+
+PUBLIC_META_PERMISSION_MAP: dict[
+    str, Callable[[ResolveInfo, Any], list[BasePermissionEnum]]
 ] = {
     "Address": public_address_permissions,
     "App": app_permissions,
     "Attribute": attribute_permissions,
     "Category": product_permissions,
+    "Channel": channel_permissions,
     "Checkout": no_permissions,
     "CheckoutLine": no_permissions,
     "Collection": product_permissions,
@@ -286,6 +297,7 @@ PUBLIC_META_PERMISSION_MAP: Dict[
     "Page": page_permissions,
     "PageType": page_type_permissions,
     "Payment": public_payment_permissions,
+    "Promotion": discount_permissions,
     "TransactionItem": private_payment_permissions,
     "Product": product_permissions,
     "ProductMedia": product_permissions,
@@ -294,6 +306,7 @@ PUBLIC_META_PERMISSION_MAP: Dict[
     "Sale": discount_permissions,
     "ShippingMethodType": shipping_permissions,
     "ShippingZone": shipping_permissions,
+    "Shop": site_permissions,
     "TaxConfiguration": tax_permissions,
     "TaxClass": tax_permissions,
     "User": public_user_permissions,
@@ -302,13 +315,14 @@ PUBLIC_META_PERMISSION_MAP: Dict[
 }
 
 
-PRIVATE_META_PERMISSION_MAP: Dict[
-    str, Callable[[ResolveInfo, Any], List[BasePermissionEnum]]
+PRIVATE_META_PERMISSION_MAP: dict[
+    str, Callable[[ResolveInfo, Any], list[BasePermissionEnum]]
 ] = {
     "Address": private_address_permissions,
     "App": private_app_permssions,
     "Attribute": attribute_permissions,
     "Category": product_permissions,
+    "Channel": channel_permissions,
     "Checkout": checkout_permissions,
     "CheckoutLine": checkout_permissions,
     "Collection": product_permissions,
@@ -323,6 +337,7 @@ PRIVATE_META_PERMISSION_MAP: Dict[
     "Page": page_permissions,
     "PageType": page_type_permissions,
     "Payment": private_payment_permissions,
+    "Promotion": discount_permissions,
     "TransactionItem": private_payment_permissions,
     "Product": product_permissions,
     "ProductMedia": product_permissions,
@@ -332,6 +347,7 @@ PRIVATE_META_PERMISSION_MAP: Dict[
     "ShippingMethod": shipping_permissions,
     "ShippingMethodType": shipping_permissions,
     "ShippingZone": shipping_permissions,
+    "Shop": site_permissions,
     "TaxConfiguration": tax_permissions,
     "TaxClass": tax_permissions,
     "User": private_user_permissions,

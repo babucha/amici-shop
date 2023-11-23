@@ -60,14 +60,24 @@ PRODUCT_VARIANT_BULK_CREATE_MUTATION = """
 """
 
 
+@patch(
+    "saleor.graphql.product.bulk_mutations.product_variant_bulk_create."
+    "get_webhooks_for_event"
+)
 @patch("saleor.plugins.manager.PluginsManager.product_variant_created")
 def test_product_variant_bulk_create_by_name(
     product_variant_created_webhook_mock,
+    mocked_get_webhooks_for_event,
     staff_api_client,
     product,
     size_attribute,
     permission_manage_products,
+    any_webhook,
+    settings,
 ):
+    # given
+    mocked_get_webhooks_for_event.return_value = [any_webhook]
+    settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
     # given
     product_variant_count = ProductVariant.objects.count()
     attribute_value_count = size_attribute.values.count()
@@ -109,14 +119,24 @@ def test_product_variant_bulk_create_by_name(
     assert product_variant_created_webhook_mock.call_count == data["count"]
 
 
+@patch(
+    "saleor.graphql.product.bulk_mutations."
+    "product_variant_bulk_create.get_webhooks_for_event"
+)
 @patch("saleor.plugins.manager.PluginsManager.product_variant_created")
 def test_product_variant_bulk_create_by_attribute_id(
     product_variant_created_webhook_mock,
+    mocked_get_webhooks_for_event,
     staff_api_client,
     product,
     size_attribute,
     permission_manage_products,
+    any_webhook,
+    settings,
 ):
+    # given
+    mocked_get_webhooks_for_event.return_value = [any_webhook]
+    settings.PLUGINS = ["saleor.plugins.webhook.plugin.WebhookPlugin"]
     product_variant_count = ProductVariant.objects.count()
     attribute_value_count = size_attribute.values.count()
     product_id = graphene.Node.to_global_id("Product", product.pk)
@@ -203,9 +223,7 @@ def test_product_variant_bulk_create_with_swatch_attribute(
 def test_product_variant_bulk_create_only_not_variant_selection_attributes(
     staff_api_client, product, size_attribute, permission_manage_products
 ):
-    """Ensure that sku is set as variant name when only variant selection attributes
-    are assigned.
-    """
+    """Test that the variant name defaults to SKU if no selection attributes exist."""
     product_variant_count = ProductVariant.objects.count()
     attribute_value_count = size_attribute.values.count()
 
@@ -1037,77 +1055,6 @@ def test_product_variant_bulk_create_many_errors(
     ]
     for expected_error in expected_errors:
         assert expected_error in errors
-    assert product_variant_count == ProductVariant.objects.count()
-
-
-def test_product_variant_bulk_create_two_variants_duplicated_attribute_value(
-    staff_api_client,
-    product_with_variant_with_two_attributes,
-    color_attribute,
-    size_attribute,
-    permission_manage_products,
-):
-    product = product_with_variant_with_two_attributes
-    product_variant_count = ProductVariant.objects.count()
-    product_id = graphene.Node.to_global_id("Product", product.pk)
-    color_attribute_id = graphene.Node.to_global_id("Attribute", color_attribute.id)
-    size_attribute_id = graphene.Node.to_global_id("Attribute", size_attribute.id)
-    variants = [
-        {
-            "sku": str(uuid4())[:12],
-            "attributes": [
-                {"id": color_attribute_id, "values": ["red"]},
-                {"id": size_attribute_id, "values": ["small"]},
-            ],
-        }
-    ]
-    variables = {"productId": product_id, "variants": variants}
-    staff_api_client.user.user_permissions.add(permission_manage_products)
-    response = staff_api_client.post_graphql(
-        PRODUCT_VARIANT_BULK_CREATE_MUTATION, variables
-    )
-    content = get_graphql_content(response)
-    data = content["data"]["productVariantBulkCreate"]
-    assert len(data["errors"]) == 1
-    error = data["errors"][0]
-    assert error["field"] == "attributes"
-    assert error["code"] == ProductVariantBulkErrorCode.DUPLICATED_INPUT_ITEM.name
-    assert error["index"] == 0
-    assert product_variant_count == ProductVariant.objects.count()
-
-
-def test_product_variant_bulk_create_two_variants_duplicated_attribute_value_in_input(
-    staff_api_client,
-    product_with_variant_with_two_attributes,
-    permission_manage_products,
-    color_attribute,
-    size_attribute,
-):
-    product = product_with_variant_with_two_attributes
-    product_id = graphene.Node.to_global_id("Product", product.pk)
-    product_variant_count = ProductVariant.objects.count()
-    color_attribute_id = graphene.Node.to_global_id("Attribute", color_attribute.id)
-    size_attribute_id = graphene.Node.to_global_id("Attribute", size_attribute.id)
-    attributes = [
-        {"id": color_attribute_id, "values": [color_attribute.values.last().slug]},
-        {"id": size_attribute_id, "values": [size_attribute.values.last().slug]},
-    ]
-    variants = [
-        {"sku": str(uuid4())[:12], "attributes": attributes},
-        {"sku": str(uuid4())[:12], "attributes": attributes},
-    ]
-    variables = {"productId": product_id, "variants": variants}
-    staff_api_client.user.user_permissions.add(permission_manage_products)
-    response = staff_api_client.post_graphql(
-        PRODUCT_VARIANT_BULK_CREATE_MUTATION, variables
-    )
-    content = get_graphql_content(response)
-    data = content["data"]["productVariantBulkCreate"]
-    assert len(data["errors"]) == 1
-    error = data["errors"][0]
-    assert error["field"] == "attributes"
-    assert error["code"] == ProductVariantBulkErrorCode.DUPLICATED_INPUT_ITEM.name
-    assert error["index"] == 1
     assert product_variant_count == ProductVariant.objects.count()
 
 

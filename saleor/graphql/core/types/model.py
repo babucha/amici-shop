@@ -1,12 +1,14 @@
 import copy
-from typing import Generic, Optional, Type, TypeVar
+from typing import Generic, Optional, TypeVar
 from uuid import UUID
 
 from django.db.models import Model, Q
-from graphene.types.objecttype import ObjectType, ObjectTypeOptions
+from graphene.types.objecttype import ObjectTypeOptions
 
-from ..descriptions import ADDED_IN_33, PREVIEW_FEATURE
+from ..descriptions import ADDED_IN_33
+from ..doc_category import DOC_CATEGORY_MAP
 from . import TYPES_WITH_DOUBLE_ID_AVAILABLE
+from .base import BaseObjectType
 
 
 class ModelObjectOptions(ObjectTypeOptions):
@@ -17,7 +19,7 @@ class ModelObjectOptions(ObjectTypeOptions):
 MT = TypeVar("MT", bound=Model)
 
 
-class ModelObjectType(Generic[MT], ObjectType):
+class ModelObjectType(Generic[MT], BaseObjectType):
     @classmethod
     def __init_subclass_with_meta__(
         cls,
@@ -25,6 +27,7 @@ class ModelObjectType(Generic[MT], ObjectType):
         possible_types=(),
         default_resolver=None,
         _meta=None,
+        doc_category=None,
         **options,
     ):
         if not _meta:
@@ -42,10 +45,17 @@ class ModelObjectType(Generic[MT], ObjectType):
                     f"received '{type(options['model'])}' type."
                 )
 
-            _meta.model = options.pop("model")
+            model = options.pop("model")
+            _meta.model = model
             _meta.metadata_since = options.pop("metadata_since", None)
 
-        super(ModelObjectType, cls).__init_subclass_with_meta__(
+            doc_category_key = f"{model._meta.app_label}.{model.__name__}"
+            if doc_category not in options:
+                options["doc_category"] = doc_category
+            if not options["doc_category"] and doc_category_key in DOC_CATEGORY_MAP:
+                options["doc_category"] = DOC_CATEGORY_MAP[doc_category_key]
+
+        super().__init_subclass_with_meta__(
             interfaces=interfaces,
             possible_types=possible_types,
             default_resolver=default_resolver,
@@ -74,11 +84,11 @@ class ModelObjectType(Generic[MT], ObjectType):
                 # is required, otherwise the description is changed in each model
                 # that inherits the `ObjectWithMetadata` interface
                 field = copy.deepcopy(field)
-                field.description = field.description + added_label + PREVIEW_FEATURE
+                field.description = field.description + added_label
                 cls._meta.fields[field_name] = field
             elif metadata_since and field_name in ["private_metadata", "metadata"]:
                 field = copy.deepcopy(field)
-                field.description = field.description + metadata_since + PREVIEW_FEATURE
+                field.description = field.description + metadata_since
                 cls._meta.fields[field_name] = field
 
     @classmethod
@@ -103,5 +113,5 @@ class ModelObjectType(Generic[MT], ObjectType):
             return None
 
     @classmethod
-    def get_model(cls) -> Type[MT]:
+    def get_model(cls) -> type[MT]:
         return cls._meta.model

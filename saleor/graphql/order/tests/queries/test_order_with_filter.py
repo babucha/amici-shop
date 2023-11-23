@@ -62,18 +62,17 @@ def order_list_with_cc_orders(orders, warehouse_for_cc):
 def test_order_query_with_filter_channels_with_one_channel(
     orders_query_with_filter,
     staff_api_client,
-    permission_manage_orders,
+    permission_group_manage_orders,
     orders,
     channel_USD,
 ):
     # given
     channel_id = graphene.Node.to_global_id("Channel", channel_USD.pk)
     variables = {"filter": {"channels": [channel_id]}}
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
 
     # when
-    response = staff_api_client.post_graphql(
-        orders_query_with_filter, variables, permissions=(permission_manage_orders,)
-    )
+    response = staff_api_client.post_graphql(orders_query_with_filter, variables)
 
     # then
     content = get_graphql_content(response)
@@ -84,16 +83,16 @@ def test_order_query_with_filter_channels_with_one_channel(
 def test_order_query_with_filter_channels_without_channel(
     orders_query_with_filter,
     staff_api_client,
-    permission_manage_orders,
+    permission_group_manage_orders,
     orders,
 ):
     # given
     variables = {"filter": {"channels": []}}
 
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
+
     # when
-    response = staff_api_client.post_graphql(
-        orders_query_with_filter, variables, permissions=(permission_manage_orders,)
-    )
+    response = staff_api_client.post_graphql(orders_query_with_filter, variables)
 
     # then
     content = get_graphql_content(response)
@@ -104,7 +103,7 @@ def test_order_query_with_filter_channels_without_channel(
 def test_order_query_with_filter_channels_with_many_channel(
     orders_query_with_filter,
     staff_api_client,
-    permission_manage_orders,
+    permission_group_manage_orders,
     orders,
     channel_USD,
     channel_PLN,
@@ -116,10 +115,10 @@ def test_order_query_with_filter_channels_with_many_channel(
     channel_pln_id = graphene.Node.to_global_id("Channel", channel_PLN.pk)
     variables = {"filter": {"channels": [channel_pln_id, channel_usd_id]}}
 
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
+
     # when
-    response = staff_api_client.post_graphql(
-        orders_query_with_filter, variables, permissions=(permission_manage_orders,)
-    )
+    response = staff_api_client.post_graphql(orders_query_with_filter, variables)
 
     # then
     content = get_graphql_content(response)
@@ -131,18 +130,17 @@ def test_order_query_with_filter_channels_with_many_channel(
 def test_order_query_with_filter_channels_with_empty_channel(
     orders_query_with_filter,
     staff_api_client,
-    permission_manage_orders,
+    permission_group_manage_orders,
     orders,
     other_channel_USD,
 ):
     # given
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
     channel_id = graphene.Node.to_global_id("Channel", other_channel_USD.pk)
     variables = {"filter": {"channels": [channel_id]}}
 
     # when
-    response = staff_api_client.post_graphql(
-        orders_query_with_filter, variables, permissions=(permission_manage_orders,)
-    )
+    response = staff_api_client.post_graphql(orders_query_with_filter, variables)
 
     # then
     content = get_graphql_content(response)
@@ -153,11 +151,12 @@ def test_order_query_with_filter_channels_with_empty_channel(
 def test_order_query_with_filter_gift_card_used_true(
     orders_query_with_filter,
     staff_api_client,
-    permission_manage_orders,
+    permission_group_manage_orders,
     gift_card,
     orders,
 ):
     # given
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
     gift_card_order = orders[0]
     gift_cards_used_in_order_event(
         [(gift_card, 20.0)], gift_card_order, staff_api_client.user, None
@@ -165,9 +164,7 @@ def test_order_query_with_filter_gift_card_used_true(
     variables = {"filter": {"giftCardUsed": True}}
 
     # when
-    response = staff_api_client.post_graphql(
-        orders_query_with_filter, variables, permissions=(permission_manage_orders,)
-    )
+    response = staff_api_client.post_graphql(orders_query_with_filter, variables)
 
     # then
     content = get_graphql_content(response)
@@ -181,11 +178,12 @@ def test_order_query_with_filter_gift_card_used_true(
 def test_order_query_with_filter_gift_card_used_false(
     orders_query_with_filter,
     staff_api_client,
-    permission_manage_orders,
+    permission_group_manage_orders,
     gift_card,
     orders,
 ):
     # given
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
     gift_card_order = orders[0]
     gift_card_order_id = graphene.Node.to_global_id("Order", gift_card_order.id)
     gift_cards_used_in_order_event(
@@ -194,9 +192,7 @@ def test_order_query_with_filter_gift_card_used_false(
     variables = {"filter": {"giftCardUsed": False}}
 
     # when
-    response = staff_api_client.post_graphql(
-        orders_query_with_filter, variables, permissions=(permission_manage_orders,)
-    )
+    response = staff_api_client.post_graphql(orders_query_with_filter, variables)
 
     # then
     content = get_graphql_content(response)
@@ -209,19 +205,18 @@ def test_order_query_with_filter_gift_card_used_false(
 def test_order_query_with_filter_gift_card_bough_true(
     orders_query_with_filter,
     staff_api_client,
-    permission_manage_orders,
+    permission_group_manage_orders,
     gift_card,
     orders,
 ):
     # given
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
     gift_card_order = orders[-1]
     gift_cards_bought_event([gift_card], gift_card_order, staff_api_client.user, None)
     variables = {"filter": {"giftCardBought": True}}
 
     # when
-    response = staff_api_client.post_graphql(
-        orders_query_with_filter, variables, permissions=(permission_manage_orders,)
-    )
+    response = staff_api_client.post_graphql(orders_query_with_filter, variables)
 
     # then
     content = get_graphql_content(response)
@@ -235,20 +230,19 @@ def test_order_query_with_filter_gift_card_bough_true(
 def test_order_query_with_filter_gift_card_bought_false(
     orders_query_with_filter,
     staff_api_client,
-    permission_manage_orders,
+    permission_group_manage_orders,
     gift_card,
     orders,
 ):
     # given
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
     gift_card_order = orders[-1]
     gift_card_order_id = graphene.Node.to_global_id("Order", gift_card_order.id)
     gift_cards_bought_event([gift_card], gift_card_order, staff_api_client.user, None)
     variables = {"filter": {"giftCardBought": False}}
 
     # when
-    response = staff_api_client.post_graphql(
-        orders_query_with_filter, variables, permissions=(permission_manage_orders,)
-    )
+    response = staff_api_client.post_graphql(orders_query_with_filter, variables)
 
     # then
     content = get_graphql_content(response)
@@ -259,7 +253,7 @@ def test_order_query_with_filter_gift_card_bought_false(
 
 
 @pytest.mark.parametrize(
-    "orders_filter, count",
+    ("orders_filter", "count"),
     [
         (
             {
@@ -281,14 +275,14 @@ def test_order_query_with_filter_created(
     count,
     orders_query_with_filter,
     staff_api_client,
-    permission_manage_orders,
+    permission_group_manage_orders,
     channel_USD,
 ):
     Order.objects.create(channel=channel_USD)
     with freeze_time("2012-01-14"):
         Order.objects.create(channel=channel_USD)
     variables = {"filter": orders_filter}
-    staff_api_client.user.user_permissions.add(permission_manage_orders)
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
     response = staff_api_client.post_graphql(orders_query_with_filter, variables)
     content = get_graphql_content(response)
     orders = content["data"]["orders"]["edges"]
@@ -297,7 +291,7 @@ def test_order_query_with_filter_created(
 
 
 @pytest.mark.parametrize(
-    "orders_filter, count",
+    ("orders_filter", "count"),
     [
         ({"updatedAt": {"gte": "2012-01-14T10:59:00+00:00"}}, 2),
         ({"updatedAt": {"lte": "2012-01-14T12:00:05+00:00"}}, 2),
@@ -321,7 +315,7 @@ def test_order_query_with_filter_updated_at(
     count,
     orders_query_with_filter,
     staff_api_client,
-    permission_manage_orders,
+    permission_group_manage_orders,
     channel_USD,
 ):
     with freeze_time("2012-01-14 11:00:00"):
@@ -331,7 +325,7 @@ def test_order_query_with_filter_updated_at(
         Order.objects.create(channel=channel_USD)
 
     variables = {"filter": orders_filter}
-    staff_api_client.user.user_permissions.add(permission_manage_orders)
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
     response = staff_api_client.post_graphql(orders_query_with_filter, variables)
     content = get_graphql_content(response)
     orders = content["data"]["orders"]["edges"]
@@ -340,7 +334,7 @@ def test_order_query_with_filter_updated_at(
 
 
 @pytest.mark.parametrize(
-    "orders_filter, count, payment_status",
+    ("orders_filter", "count", "payment_status"),
     [
         ({"paymentStatus": "FULLY_CHARGED"}, 1, ChargeStatus.FULLY_CHARGED),
         ({"paymentStatus": "NOT_CHARGED"}, 2, ChargeStatus.NOT_CHARGED),
@@ -358,7 +352,7 @@ def test_order_query_with_filter_payment_status(
     orders_query_with_filter,
     staff_api_client,
     payment_dummy,
-    permission_manage_orders,
+    permission_group_manage_orders,
     channel_PLN,
 ):
     payment_dummy.charge_status = payment_status
@@ -370,7 +364,7 @@ def test_order_query_with_filter_payment_status(
     payment_dummy.save()
 
     variables = {"filter": orders_filter}
-    staff_api_client.user.user_permissions.add(permission_manage_orders)
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
     response = staff_api_client.post_graphql(orders_query_with_filter, variables)
     content = get_graphql_content(response)
     orders = content["data"]["orders"]["edges"]
@@ -378,8 +372,32 @@ def test_order_query_with_filter_payment_status(
     assert len(orders) == count
 
 
+def test_order_query_with_filter_payment_fully_refunded_not_active(
+    orders_query_with_filter,
+    staff_api_client,
+    payment_dummy,
+    permission_group_manage_orders,
+    channel_PLN,
+):
+    # given
+    payment_dummy.charge_status = ChargeStatus.FULLY_REFUNDED
+    payment_dummy.is_active = False
+    payment_dummy.order = Order.objects.create(channel=channel_PLN)
+    payment_dummy.save()
+    variables = {"filter": {"paymentStatus": "FULLY_REFUNDED"}}
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
+
+    # when
+    response = staff_api_client.post_graphql(orders_query_with_filter, variables)
+    content = get_graphql_content(response)
+    orders = content["data"]["orders"]["edges"]
+
+    # then
+    assert len(orders) == 1
+
+
 @pytest.mark.parametrize(
-    "orders_filter, count, status",
+    ("orders_filter", "count", "status"),
     [
         ({"status": "UNFULFILLED"}, 2, OrderStatus.UNFULFILLED),
         ({"status": "UNCONFIRMED"}, 1, OrderStatus.UNCONFIRMED),
@@ -395,21 +413,18 @@ def test_order_query_with_filter_status(
     orders_query_with_filter,
     staff_api_client,
     payment_dummy,
-    permission_manage_orders,
-    order,
+    permission_group_manage_orders,
+    order_generator,
     channel_USD,
 ):
-    order.status = status
-    order.save()
-
-    Order.objects.create(channel=channel_USD)
+    order1 = order_generator(status=status)
 
     variables = {"filter": orders_filter}
-    staff_api_client.user.user_permissions.add(permission_manage_orders)
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
     response = staff_api_client.post_graphql(orders_query_with_filter, variables)
     content = get_graphql_content(response)
     orders = content["data"]["orders"]["edges"]
-    order_id = graphene.Node.to_global_id("Order", order.pk)
+    order_id = graphene.Node.to_global_id("Order", order1.pk)
 
     orders_ids_from_response = [o["node"]["id"] for o in orders]
     assert len(orders) == count
@@ -417,7 +432,7 @@ def test_order_query_with_filter_status(
 
 
 @pytest.mark.parametrize(
-    "orders_filter, user_field, user_value",
+    ("orders_filter", "user_field", "user_value"),
     [
         ({"customer": "admin"}, "email", "admin@example.com"),
         ({"customer": "John"}, "first_name", "johnny"),
@@ -430,7 +445,7 @@ def test_order_query_with_filter_customer_fields(
     user_value,
     orders_query_with_filter,
     staff_api_client,
-    permission_manage_orders,
+    permission_group_manage_orders,
     customer_user,
     channel_USD,
 ):
@@ -442,7 +457,7 @@ def test_order_query_with_filter_customer_fields(
     Order.objects.bulk_create([order, Order(channel=channel_USD)])
 
     variables = {"filter": orders_filter}
-    staff_api_client.user.user_permissions.add(permission_manage_orders)
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
     response = staff_api_client.post_graphql(orders_query_with_filter, variables)
     content = get_graphql_content(response)
     orders = content["data"]["orders"]["edges"]
@@ -455,17 +470,16 @@ def test_order_query_with_filter_customer_fields(
 def test_order_query_with_filter_is_click_and_collect_true(
     orders_query_with_filter,
     staff_api_client,
-    permission_manage_orders,
+    permission_group_manage_orders,
     order_list_with_cc_orders,
 ):
     # given
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
     orders = order_list_with_cc_orders
     variables = {"filter": {"isClickAndCollect": True}}
 
     # when
-    response = staff_api_client.post_graphql(
-        orders_query_with_filter, variables, permissions=(permission_manage_orders,)
-    )
+    response = staff_api_client.post_graphql(orders_query_with_filter, variables)
 
     # then
     content = get_graphql_content(response)
@@ -484,17 +498,16 @@ def test_order_query_with_filter_is_click_and_collect_true(
 def test_order_query_with_filter_is_click_and_collect_false(
     orders_query_with_filter,
     staff_api_client,
-    permission_manage_orders,
+    permission_group_manage_orders,
     order_list_with_cc_orders,
 ):
     # given
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
     orders = order_list_with_cc_orders
     variables = {"filter": {"isClickAndCollect": False}}
 
     # when
-    response = staff_api_client.post_graphql(
-        orders_query_with_filter, variables, permissions=(permission_manage_orders,)
-    )
+    response = staff_api_client.post_graphql(orders_query_with_filter, variables)
 
     # then
     content = get_graphql_content(response)
@@ -560,16 +573,15 @@ def preorders(orders, product):
 def test_order_query_with_filter_is_preorder_true(
     orders_query_with_filter,
     staff_api_client,
-    permission_manage_orders,
+    permission_group_manage_orders,
     preorders,
 ):
     # given
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
     variables = {"filter": {"isPreorder": True}}
 
     # when
-    response = staff_api_client.post_graphql(
-        orders_query_with_filter, variables, permissions=(permission_manage_orders,)
-    )
+    response = staff_api_client.post_graphql(orders_query_with_filter, variables)
 
     # then
     content = get_graphql_content(response)
@@ -584,16 +596,15 @@ def test_order_query_with_filter_is_preorder_true(
 def test_order_query_with_filter_is_preorder_false(
     orders_query_with_filter,
     staff_api_client,
-    permission_manage_orders,
+    permission_group_manage_orders,
     preorders,
 ):
     # given
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
     variables = {"filter": {"isPreorder": False}}
 
     # when
-    response = staff_api_client.post_graphql(
-        orders_query_with_filter, variables, permissions=(permission_manage_orders,)
-    )
+    response = staff_api_client.post_graphql(orders_query_with_filter, variables)
 
     # then
     content = get_graphql_content(response)
@@ -607,7 +618,7 @@ def test_order_query_with_filter_is_preorder_false(
 
 
 @pytest.mark.parametrize(
-    "orders_filter, count",
+    ("orders_filter", "count"),
     [
         ({"search": "discount name"}, 2),
         ({"search": "Some other"}, 1),
@@ -625,7 +636,7 @@ def test_orders_query_with_filter_search(
     count,
     orders_query_with_filter,
     staff_api_client,
-    permission_manage_orders,
+    permission_group_manage_orders,
     customer_user,
     channel_USD,
     product,
@@ -675,8 +686,8 @@ def test_orders_query_with_filter_search(
 
     order_with_orderline = orders[2]
     channel = order_with_orderline.channel
-    channel_listening = variant.channel_listings.get(channel=channel)
-    net = variant.get_price(product, [], channel, channel_listening)
+    channel_listing = variant.channel_listings.get(channel=channel)
+    net = variant.get_price(channel_listing)
     currency = net.currency
     gross = Money(amount=net.amount * Decimal(1.23), currency=currency)
     unit_price = TaxedMoney(net=net, gross=gross)
@@ -702,7 +713,7 @@ def test_orders_query_with_filter_search(
     Order.objects.bulk_update(orders, ["search_vector"])
 
     variables = {"filter": orders_filter}
-    staff_api_client.user.user_permissions.add(permission_manage_orders)
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
     response = staff_api_client.post_graphql(orders_query_with_filter, variables)
     content = get_graphql_content(response)
     assert content["data"]["orders"]["totalCount"] == count
@@ -711,7 +722,7 @@ def test_orders_query_with_filter_search(
 def test_orders_query_with_filter_search_by_global_payment_id(
     orders_query_with_filter,
     staff_api_client,
-    permission_manage_orders,
+    permission_group_manage_orders,
     customer_user,
     channel_USD,
 ):
@@ -728,13 +739,15 @@ def test_orders_query_with_filter_search_by_global_payment_id(
             ),
         ]
     )
-    OrderDiscount.objects.create(
-        order=orders[0],
-        name="test_discount1",
-        value=Decimal("1"),
-        amount_value=Decimal("1"),
-        translated_name="translated_discount1_name",
-    ),
+    (
+        OrderDiscount.objects.create(
+            order=orders[0],
+            name="test_discount1",
+            value=Decimal("1"),
+            amount_value=Decimal("1"),
+            translated_name="translated_discount1_name",
+        ),
+    )
 
     order_with_payment = orders[0]
     payment = Payment.objects.create(order=order_with_payment)
@@ -746,7 +759,7 @@ def test_orders_query_with_filter_search_by_global_payment_id(
     Order.objects.bulk_update(orders, ["search_vector"])
 
     variables = {"filter": {"search": global_id}}
-    staff_api_client.user.user_permissions.add(permission_manage_orders)
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
     response = staff_api_client.post_graphql(orders_query_with_filter, variables)
     content = get_graphql_content(response)
     assert content["data"]["orders"]["totalCount"] == 1
@@ -754,13 +767,13 @@ def test_orders_query_with_filter_search_by_global_payment_id(
 
 def test_orders_query_with_filter_search_by_number(
     orders_query_with_filter,
-    order_with_search_vector_value,
+    order_generator,
     staff_api_client,
-    permission_manage_orders,
+    permission_group_manage_orders,
 ):
-    order = order_with_search_vector_value
+    order = order_generator(search_vector_class=FlatConcatSearchVector)
     variables = {"filter": {"search": order.number}}
-    staff_api_client.user.user_permissions.add(permission_manage_orders)
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
     response = staff_api_client.post_graphql(orders_query_with_filter, variables)
     content = get_graphql_content(response)
     assert content["data"]["orders"]["totalCount"] == 1
@@ -768,31 +781,36 @@ def test_orders_query_with_filter_search_by_number(
 
 def test_orders_query_with_filter_search_by_number_with_hash(
     orders_query_with_filter,
-    order_with_search_vector_value,
+    order_generator,
     staff_api_client,
-    permission_manage_orders,
+    permission_group_manage_orders,
 ):
-    order = order_with_search_vector_value
+    order = order_generator(search_vector_class=FlatConcatSearchVector)
     variables = {"filter": {"search": f"#{order.number}"}}
-    staff_api_client.user.user_permissions.add(permission_manage_orders)
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
     response = staff_api_client.post_graphql(orders_query_with_filter, variables)
     content = get_graphql_content(response)
     assert content["data"]["orders"]["totalCount"] == 1
 
 
 def test_orders_query_with_filter_search_by_product_sku_with_multiple_identic_sku(
-    orders_query_with_filter, staff_api_client, permission_manage_orders, allocations
+    orders_query_with_filter,
+    staff_api_client,
+    permission_group_manage_orders,
+    allocations,
 ):
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
     variables = {"filter": {"search": allocations[0].order_line.product_sku}}
-    response = staff_api_client.post_graphql(
-        orders_query_with_filter, variables, permissions=(permission_manage_orders,)
-    )
+    response = staff_api_client.post_graphql(orders_query_with_filter, variables)
     content = get_graphql_content(response)
     assert content["data"]["orders"]["totalCount"] == 3
 
 
 def test_order_query_with_filter_search_by_product_sku_order_line(
-    orders_query_with_filter, staff_api_client, permission_manage_orders, order_line
+    orders_query_with_filter,
+    staff_api_client,
+    permission_group_manage_orders,
+    order_line,
 ):
     query = """
       query ($filter: OrderFilterInput!, ) {
@@ -809,14 +827,13 @@ def test_order_query_with_filter_search_by_product_sku_order_line(
         }
       }
     """
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
     order = order_line.order
     order.refresh_from_db()
     update_order_search_vector(order)
 
     variables = {"filter": {"search": order_line.product_sku}}
-    response = staff_api_client.post_graphql(
-        query, variables, permissions=(permission_manage_orders,)
-    )
+    response = staff_api_client.post_graphql(query, variables)
     content = get_graphql_content(response)
     orders = content["data"]["orders"]["edges"][0]
     lines = orders["node"]["lines"][0]["productSku"]
@@ -828,10 +845,11 @@ def test_orders_query_with_filter_by_orders_id(
     orders_query_with_filter,
     staff_api_client,
     order,
-    permission_manage_orders,
+    permission_group_manage_orders,
     channel_USD,
 ):
     # given
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
     orders = Order.objects.bulk_create(
         [
             Order(
@@ -850,9 +868,7 @@ def test_orders_query_with_filter_by_orders_id(
     variables = {"filter": {"ids": orders_ids}}
 
     # when
-    response = staff_api_client.post_graphql(
-        orders_query_with_filter, variables, permissions=(permission_manage_orders,)
-    )
+    response = staff_api_client.post_graphql(orders_query_with_filter, variables)
     content = get_graphql_content(response)
     edges = content["data"]["orders"]["edges"]
     response_ids = [edge["node"]["id"] for edge in edges]
@@ -866,10 +882,11 @@ def test_orders_query_with_filter_by_old_orders_id(
     orders_query_with_filter,
     staff_api_client,
     order,
-    permission_manage_orders,
+    permission_group_manage_orders,
     channel_USD,
 ):
     # given
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
     orders = Order.objects.bulk_create(
         [
             Order(
@@ -890,9 +907,7 @@ def test_orders_query_with_filter_by_old_orders_id(
     variables = {"filter": {"ids": orders_ids}}
 
     # when
-    response = staff_api_client.post_graphql(
-        orders_query_with_filter, variables, permissions=(permission_manage_orders,)
-    )
+    response = staff_api_client.post_graphql(orders_query_with_filter, variables)
     content = get_graphql_content(response)
     edges = content["data"]["orders"]["edges"]
     response_ids = [edge["node"]["id"] for edge in edges]
@@ -906,10 +921,11 @@ def test_orders_query_with_filter_by_old_and_new_orders_id(
     orders_query_with_filter,
     staff_api_client,
     order,
-    permission_manage_orders,
+    permission_group_manage_orders,
     channel_USD,
 ):
     # given
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
     orders = Order.objects.bulk_create(
         [
             Order(
@@ -932,9 +948,7 @@ def test_orders_query_with_filter_by_old_and_new_orders_id(
     variables = {"filter": {"ids": orders_ids}}
 
     # when
-    response = staff_api_client.post_graphql(
-        orders_query_with_filter, variables, permissions=(permission_manage_orders,)
-    )
+    response = staff_api_client.post_graphql(orders_query_with_filter, variables)
     content = get_graphql_content(response)
     edges = content["data"]["orders"]["edges"]
     response_ids = [edge["node"]["id"] for edge in edges]
@@ -949,7 +963,7 @@ def test_orders_query_with_filter_by_old_and_new_orders_id(
 def test_order_query_with_filter_search_by_product_sku_multi_order_lines(
     orders_query_with_filter,
     staff_api_client,
-    permission_manage_orders,
+    permission_group_manage_orders,
     product,
     channel_USD,
     order,
@@ -981,7 +995,7 @@ def test_order_query_with_filter_search_by_product_sku_multi_order_lines(
     product = product
     channel = order.channel
     channel_listening = variants[0].channel_listings.get(channel=channel)
-    net = variants[0].get_price(product, [], channel, channel_listening)
+    net = variants[0].get_price(channel_listening)
     currency = net.currency
     gross = Money(amount=net.amount * Decimal(1.23), currency=currency)
     quantity = 3
@@ -1025,17 +1039,16 @@ def test_order_query_with_filter_search_by_product_sku_multi_order_lines(
     )
     order.refresh_from_db()
     update_order_search_vector(order)
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
 
     variables = {"filter": {"search": lines[0].product_sku}}
-    response = staff_api_client.post_graphql(
-        orders_query_with_filter, variables, permissions=(permission_manage_orders,)
-    )
+    response = staff_api_client.post_graphql(orders_query_with_filter, variables)
     content = get_graphql_content(response)
     assert content["data"]["orders"]["totalCount"] == 1
 
 
 @pytest.mark.parametrize(
-    "transaction_data, statuses, expected_count",
+    ("transaction_data", "statuses", "expected_count"),
     [
         (
             {"authorized_value": Decimal("10")},
@@ -1043,9 +1056,9 @@ def test_order_query_with_filter_search_by_product_sku_multi_order_lines(
             1,
         ),
         (
-            {"authorized_value": Decimal("00")},
-            [OrderAuthorizeStatusEnum.PARTIAL.name],
-            0,
+            {"authorized_value": Decimal("0")},
+            [OrderAuthorizeStatusEnum.NONE.name],
+            1,
         ),
         (
             {"authorized_value": Decimal("100")},
@@ -1063,9 +1076,9 @@ def test_order_query_with_filter_search_by_product_sku_multi_order_lines(
             2,
         ),
         (
-            {"authorized_value": Decimal("10"), "charged_value": Decimal("90")},
-            [OrderAuthorizeStatusEnum.FULL.name],
-            2,
+            {"authorized_value": Decimal("10"), "charged_value": Decimal("80")},
+            [OrderAuthorizeStatusEnum.PARTIAL.name],
+            1,
         ),
     ],
 )
@@ -1077,7 +1090,7 @@ def test_orders_query_with_filter_authorize_status(
     order_with_lines,
     order,
     staff_api_client,
-    permission_manage_orders,
+    permission_group_manage_orders,
     customer_user,
     channel_USD,
 ):
@@ -1105,7 +1118,7 @@ def test_orders_query_with_filter_authorize_status(
     update_order_authorize_data(order_with_lines)
 
     variables = {"filter": {"authorizeStatus": statuses}}
-    staff_api_client.user.user_permissions.add(permission_manage_orders)
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
 
     # when
     response = staff_api_client.post_graphql(orders_query_with_filter, variables)
@@ -1116,7 +1129,7 @@ def test_orders_query_with_filter_authorize_status(
 
 
 @pytest.mark.parametrize(
-    "transaction_data, statuses, expected_count",
+    ("transaction_data", "statuses", "expected_count"),
     [
         (
             {"charged_value": Decimal("10")},
@@ -1158,7 +1171,7 @@ def test_orders_query_with_filter_charge_status(
     order_with_lines,
     order,
     staff_api_client,
-    permission_manage_orders,
+    permission_group_manage_orders,
     customer_user,
     channel_USD,
 ):
@@ -1184,7 +1197,7 @@ def test_orders_query_with_filter_charge_status(
     update_order_charge_data(order_with_lines)
 
     variables = {"filter": {"chargeStatus": statuses}}
-    staff_api_client.user.user_permissions.add(permission_manage_orders)
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
 
     # when
     response = staff_api_client.post_graphql(orders_query_with_filter, variables)
@@ -1197,7 +1210,7 @@ def test_orders_query_with_filter_charge_status(
 def test_order_query_with_filter_numbers(
     orders_query_with_filter,
     staff_api_client,
-    permission_manage_orders,
+    permission_group_manage_orders,
     orders,
     channel_USD,
 ):
@@ -1207,11 +1220,10 @@ def test_order_query_with_filter_numbers(
             "numbers": [str(orders[0].number), str(orders[2].number)],
         },
     }
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
 
     # when
-    response = staff_api_client.post_graphql(
-        orders_query_with_filter, variables, permissions=(permission_manage_orders,)
-    )
+    response = staff_api_client.post_graphql(orders_query_with_filter, variables)
 
     # then
     content = get_graphql_content(response)
@@ -1227,7 +1239,7 @@ def test_order_query_with_filter_numbers(
 def test_order_query_with_filter_not_allow_numbers_and_ids_together(
     orders_query_with_filter,
     staff_api_client,
-    permission_manage_orders,
+    permission_group_manage_orders,
     orders,
     channel_USD,
 ):
@@ -1239,11 +1251,10 @@ def test_order_query_with_filter_not_allow_numbers_and_ids_together(
         },
     }
     error_message = "'ids' and 'numbers` are not allowed to use together in filter."
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
 
     # when
-    response = staff_api_client.post_graphql(
-        orders_query_with_filter, variables, permissions=(permission_manage_orders,)
-    )
+    response = staff_api_client.post_graphql(orders_query_with_filter, variables)
     content = get_graphql_content_from_response(response)
 
     # then
@@ -1254,12 +1265,13 @@ def test_order_query_with_filter_not_allow_numbers_and_ids_together(
 def test_order_query_with_filter_by_checkout_token(
     orders_query_with_filter,
     staff_api_client,
-    permission_manage_orders,
+    permission_group_manage_orders,
     orders_from_checkout,
     orders,
     checkout,
 ):
     # given
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
     variables = {
         "filter": {
             "checkoutIds": [
@@ -1269,9 +1281,7 @@ def test_order_query_with_filter_by_checkout_token(
     }
 
     # when
-    response = staff_api_client.post_graphql(
-        orders_query_with_filter, variables, permissions=(permission_manage_orders,)
-    )
+    response = staff_api_client.post_graphql(orders_query_with_filter, variables)
 
     # then
     content = get_graphql_content(response)
@@ -1290,14 +1300,20 @@ def test_order_query_with_filter_by_checkout_token(
 def test_order_query_with_filter_by_multiple_checkout_tokens(
     orders_query_with_filter,
     staff_api_client,
-    permission_manage_orders,
+    permission_group_manage_orders,
+    order_generator,
     orders_from_checkout,
-    order_from_checkout_JPY,
     orders,
     checkout,
     checkout_JPY,
 ):
     # given
+    order_from_checkout_JPY = order_generator(
+        status=OrderStatus.CANCELED,
+        channel=checkout_JPY.channel,
+        checkout_token=checkout_JPY.token,
+    )
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
     variables = {
         "filter": {
             "checkoutIds": [
@@ -1308,9 +1324,7 @@ def test_order_query_with_filter_by_multiple_checkout_tokens(
     }
 
     # when
-    response = staff_api_client.post_graphql(
-        orders_query_with_filter, variables, permissions=(permission_manage_orders,)
-    )
+    response = staff_api_client.post_graphql(orders_query_with_filter, variables)
 
     # then
     content = get_graphql_content(response)
@@ -1329,10 +1343,11 @@ def test_order_query_with_filter_by_multiple_checkout_tokens(
 def test_order_query_with_filter_by_empty_list(
     orders_query_with_filter,
     staff_api_client,
-    permission_manage_orders,
+    permission_group_manage_orders,
     orders_from_checkout,
 ):
     # given
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
     variables = {
         "filter": {
             "checkoutIds": [],
@@ -1340,9 +1355,7 @@ def test_order_query_with_filter_by_empty_list(
     }
 
     # when
-    response = staff_api_client.post_graphql(
-        orders_query_with_filter, variables, permissions=(permission_manage_orders,)
-    )
+    response = staff_api_client.post_graphql(orders_query_with_filter, variables)
 
     # then
     content = get_graphql_content(response)

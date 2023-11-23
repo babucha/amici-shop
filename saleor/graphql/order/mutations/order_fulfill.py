@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import DefaultDict, List, Optional
+from typing import Optional
 from uuid import UUID
 
 import graphene
@@ -11,12 +11,14 @@ from ....order import models as order_models
 from ....order.actions import OrderFulfillmentLineInfo, create_fulfillments
 from ....order.error_codes import OrderErrorCode
 from ....permission.enums import OrderPermissions
+from ....webhook.event_types import WebhookEventAsyncType
 from ...app.dataloaders import get_app_promise
 from ...core import ResolveInfo
 from ...core.descriptions import ADDED_IN_36
+from ...core.doc_category import DOC_CATEGORY_ORDERS
 from ...core.mutations import BaseMutation
-from ...core.types import NonNullList, OrderError
-from ...core.utils import get_duplicated_values
+from ...core.types import BaseInputObjectType, NonNullList, OrderError
+from ...core.utils import WebhookEventInfo, get_duplicated_values
 from ...plugins.dataloaders import get_plugin_manager_promise
 from ...site.dataloaders import get_site_promise
 from ...warehouse.types import Warehouse
@@ -24,7 +26,7 @@ from ..types import Fulfillment, Order, OrderLine
 from ..utils import prepare_insufficient_stock_order_validation_errors
 
 
-class OrderFulfillStockInput(graphene.InputObjectType):
+class OrderFulfillStockInput(BaseInputObjectType):
     quantity = graphene.Int(
         description="The number of line items to be fulfilled from given warehouse.",
         required=True,
@@ -34,8 +36,11 @@ class OrderFulfillStockInput(graphene.InputObjectType):
         required=True,
     )
 
+    class Meta:
+        doc_category = DOC_CATEGORY_ORDERS
 
-class OrderFulfillLineInput(graphene.InputObjectType):
+
+class OrderFulfillLineInput(BaseInputObjectType):
     order_line_id = graphene.ID(
         description="The ID of the order line.", name="orderLineId"
     )
@@ -45,8 +50,11 @@ class OrderFulfillLineInput(graphene.InputObjectType):
         description="List of stock items to create.",
     )
 
+    class Meta:
+        doc_category = DOC_CATEGORY_ORDERS
 
-class OrderFulfillInput(graphene.InputObjectType):
+
+class OrderFulfillInput(BaseInputObjectType):
     lines = NonNullList(
         OrderFulfillLineInput,
         required=True,
@@ -65,13 +73,19 @@ class OrderFulfillInput(graphene.InputObjectType):
         required=False,
     )
 
+    class Meta:
+        doc_category = DOC_CATEGORY_ORDERS
 
-class FulfillmentUpdateTrackingInput(graphene.InputObjectType):
+
+class FulfillmentUpdateTrackingInput(BaseInputObjectType):
     tracking_number = graphene.String(description="Fulfillment tracking number.")
     notify_customer = graphene.Boolean(
         default_value=False,
         description="If true, send an email notification to the customer.",
     )
+
+    class Meta:
+        doc_category = DOC_CATEGORY_ORDERS
 
 
 class OrderFulfill(BaseMutation):
@@ -88,9 +102,28 @@ class OrderFulfill(BaseMutation):
 
     class Meta:
         description = "Creates new fulfillments for an order."
+        doc_category = DOC_CATEGORY_ORDERS
         permissions = (OrderPermissions.MANAGE_ORDERS,)
         error_type_class = OrderError
         error_type_field = "order_errors"
+        webhook_events_info = [
+            WebhookEventInfo(
+                type=WebhookEventAsyncType.FULFILLMENT_CREATED,
+                description="A new fulfillment is created.",
+            ),
+            WebhookEventInfo(
+                type=WebhookEventAsyncType.ORDER_FULFILLED,
+                description="Order is fulfilled.",
+            ),
+            WebhookEventInfo(
+                type=WebhookEventAsyncType.FULFILLMENT_TRACKING_NUMBER_UPDATED,
+                description="Sent when fulfillment tracking number is updated.",
+            ),
+            WebhookEventInfo(
+                type=WebhookEventAsyncType.FULFILLMENT_APPROVED,
+                description="A fulfillment is approved.",
+            ),
+        ]
 
     @classmethod
     def clean_lines(cls, order_lines, quantities_for_lines):
@@ -100,12 +133,10 @@ class OrderFulfill(BaseMutation):
 
             if line_total_quantity > line_quantity_unfulfilled:
                 msg = (
-                    "Only %(quantity)d item%(item_pluralize)s remaining "
-                    "to fulfill: %(order_line)s."
+                    "Only %(quantity)d item%(item_pluralize)s remaining to fulfill."
                 ) % {
                     "quantity": line_quantity_unfulfilled,
                     "item_pluralize": pluralize(line_quantity_unfulfilled),
-                    "order_line": order_line,
                 }
                 order_line_global_id = graphene.Node.to_global_id(
                     "OrderLine", order_line.pk
@@ -167,8 +198,8 @@ class OrderFulfill(BaseMutation):
                 )
 
     @classmethod
-    def check_total_quantity_of_items(cls, quantities_for_lines: List[List[int]]):
-        flat_quantities: List[int] = sum(quantities_for_lines, [])
+    def check_total_quantity_of_items(cls, quantities_for_lines: list[list[int]]):
+        flat_quantities: list[int] = sum(quantities_for_lines, [])
         if sum(flat_quantities) <= 0:
             raise ValidationError(
                 {
@@ -201,7 +232,7 @@ class OrderFulfill(BaseMutation):
         ]
         cls.check_warehouses_for_duplicates(warehouse_ids_for_lines)
 
-        quantities_for_lines: List[List[int]] = [
+        quantities_for_lines: list[list[int]] = [
             [stock["quantity"] for stock in line["stocks"]] for line in lines
         ]
 
@@ -218,8 +249,8 @@ class OrderFulfill(BaseMutation):
 
         cls.check_total_quantity_of_items(quantities_for_lines)
 
-        lines_for_warehouses: DefaultDict[
-            UUID, List[OrderFulfillmentLineInfo]
+        lines_for_warehouses: defaultdict[
+            UUID, list[OrderFulfillmentLineInfo]
         ] = defaultdict(list)
         for line, order_line in zip(lines, order_lines):
             for stock in line["stocks"]:
@@ -254,6 +285,7 @@ class OrderFulfill(BaseMutation):
             raise ValidationError(
                 "Order does not exist.", code=OrderErrorCode.NOT_FOUND.value
             )
+        cls.check_channel_permissions(info, [instance.channel_id])
         site = get_site_promise(info.context).get()
         cleaned_input = cls.clean_input(info, instance, input, site=site)
 

@@ -1,7 +1,11 @@
 import graphene
+from django.db.models import Exists, OuterRef
 
 from ....permission.enums import ProductPermissions
 from ....product import models
+from ....product.tasks import update_products_discounted_prices_for_promotion_task
+from ....webhook.event_types import WebhookEventAsyncType
+from ....webhook.utils import get_webhooks_for_event
 from ...core.mutations import ModelBulkDeleteMutation
 from ...core.types import CollectionError, NonNullList
 from ...plugins.dataloaders import get_plugin_manager_promise
@@ -25,15 +29,24 @@ class CollectionBulkDelete(ModelBulkDeleteMutation):
     @classmethod
     def bulk_action(cls, info, queryset):
         collections_ids = queryset.values_list("id", flat=True)
+        collection_products = models.CollectionProduct.objects.filter(
+            collection_id__in=collections_ids
+        )
         products = list(
-            models.Product.objects.prefetched_for_webhook(single_object=False)
-            .filter(collections__in=collections_ids)
-            .distinct()
+            models.Product.objects.prefetched_for_webhook(single_object=False).filter(
+                Exists(collection_products.filter(product_id=OuterRef("id")))
+            )
         )
         manager = get_plugin_manager_promise(info.context).get()
+        webhooks = get_webhooks_for_event(WebhookEventAsyncType.COLLECTION_DELETED)
         for collection in queryset.iterator():
-            manager.collection_deleted(collection)
+            cls.call_event(manager.collection_deleted, collection, webhooks=webhooks)
         queryset.delete()
 
+        webhooks = get_webhooks_for_event(WebhookEventAsyncType.PRODUCT_UPDATED)
         for product in products:
-            manager.product_updated(product)
+            cls.call_event(manager.product_updated, product, webhooks=webhooks)
+
+        update_products_discounted_prices_for_promotion_task.delay(
+            [product.id for product in products]
+        )

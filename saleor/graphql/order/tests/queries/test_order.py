@@ -8,18 +8,20 @@ from .....checkout.utils import PRIVATE_META_APP_SHIPPING_ID
 from .....core.prices import quantize_price
 from .....core.taxes import zero_taxed_money
 from .....order import OrderStatus
-from .....order.models import Order
+from .....order.events import transaction_event
+from .....order.models import Order, OrderGrantedRefund
 from .....order.utils import (
     get_order_country,
     update_order_authorize_data,
+    update_order_authorize_status,
     update_order_charge_data,
+    update_order_charge_status,
 )
-from .....payment import ChargeStatus, TransactionAction, TransactionStatus
+from .....payment import ChargeStatus, TransactionAction
 from .....payment.models import TransactionEvent, TransactionItem
 from .....shipping.models import ShippingMethod, ShippingMethodChannelListing
 from .....warehouse.models import Warehouse
 from ....order.enums import OrderAuthorizeStatusEnum, OrderChargeStatusEnum
-from ....payment.enums import TransactionStatusEnum
 from ....payment.types import PaymentChargeStatusEnum
 from ....tests.utils import (
     assert_graphql_error_with_message,
@@ -28,7 +30,7 @@ from ....tests.utils import (
     get_graphql_content_from_response,
 )
 
-ORDERS_QUERY = """
+ORDERS_FULL_QUERY = """
 query OrdersQuery {
     orders(first: 1) {
         edges {
@@ -50,7 +52,15 @@ query OrdersQuery {
                     amount
                     currency
                 }
+                totalCharged{
+                    amount
+                    currency
+                }
                 totalCaptured{
+                    amount
+                    currency
+                }
+                totalCanceled{
                     amount
                     currency
                 }
@@ -90,6 +100,9 @@ query OrdersQuery {
                         gross{
                             amount
                         }
+                        net{
+                            amount
+                        }
                     }
                 }
                 discounts{
@@ -113,32 +126,10 @@ query OrdersQuery {
                     }
                 }
                 transactions{
-                    reference
-                    type
-                    status
-                    modifiedAt
-                    createdAt
-                    authorizedAmount{
-                        amount
-                        currency
-                    }
-                    voidedAmount{
-                        currency
-                        amount
-                    }
-                    chargedAmount{
-                        currency
-                        amount
-                    }
-                    refundedAmount{
-                        currency
-                        amount
-                    }
+                    id
                     events{
-                       status
-                       reference
-                       name
-                       createdAt
+                       pspReference
+                       message
                     }
                 }
                 authorizeStatus
@@ -250,6 +241,23 @@ query OrdersQuery {
                     }
                 }
                 checkoutId
+                events {
+                    id
+                    date
+                    type
+                    user {
+                        id
+                    }
+                    app {
+                        id
+                    }
+                    message
+                    email
+                    reference
+                    discount {
+                        value
+                    }
+                }
             }
         }
     }
@@ -259,11 +267,11 @@ query OrdersQuery {
 
 def test_order_query(
     staff_api_client,
-    permission_manage_orders,
-    permission_manage_shipping,
     fulfilled_order,
     checkout,
     shipping_zone,
+    permission_group_manage_orders,
+    permission_group_manage_shipping,
 ):
     # given
     order = fulfilled_order
@@ -281,11 +289,11 @@ def test_order_query(
     order.shipping_method.save()
     order.save()
 
-    staff_api_client.user.user_permissions.add(permission_manage_orders)
-    staff_api_client.user.user_permissions.add(permission_manage_shipping)
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
+    permission_group_manage_shipping.user_set.add(staff_api_client.user)
 
     # when
-    response = staff_api_client.post_graphql(ORDERS_QUERY)
+    response = staff_api_client.post_graphql(ORDERS_FULL_QUERY)
     content = get_graphql_content(response)
 
     # then
@@ -361,8 +369,9 @@ def test_order_query(
     )
 
     assert float(expected_shipping_price.price.amount) == method["price"]["amount"]
-    assert float(expected_shipping_price.minimum_order_price.amount) == (
-        method["minimumOrderPrice"]["amount"]
+    assert (
+        float(expected_shipping_price.minimum_order_price.amount)
+        == (method["minimumOrderPrice"]["amount"])
     )
     assert order_data["deliveryMethod"]["id"] == order_data["shippingMethod"]["id"]
     assert order_data["checkoutId"] == (
@@ -372,20 +381,20 @@ def test_order_query(
 
 def test_order_query_denormalized_shipping_tax_class_data(
     staff_api_client,
-    permission_manage_orders,
-    permission_manage_shipping,
+    permission_group_manage_orders,
+    permission_group_manage_shipping,
     fulfilled_order,
 ):
     # given
     order = fulfilled_order
-    staff_api_client.user.user_permissions.add(permission_manage_orders)
-    staff_api_client.user.user_permissions.add(permission_manage_shipping)
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
+    permission_group_manage_shipping.user_set.add(staff_api_client.user)
     shipping_tax_class = order.shipping_method.tax_class
     assert shipping_tax_class
 
     # when
     shipping_tax_class.delete()
-    response = staff_api_client.post_graphql(ORDERS_QUERY)
+    response = staff_api_client.post_graphql(ORDERS_FULL_QUERY)
     content = get_graphql_content(response)
 
     # then
@@ -412,13 +421,11 @@ def test_order_query_denormalized_shipping_tax_class_data(
 
 def test_order_query_total_price_is_0(
     staff_api_client,
-    permission_manage_orders,
-    permission_manage_shipping,
+    permission_group_manage_orders,
+    permission_group_manage_shipping,
     fulfilled_order,
     shipping_zone,
 ):
-    """Ensure the payment status is FULLY_CHARGED when the order total is 0
-    and there is no payment."""
     # given
     order = fulfilled_order
     price = zero_taxed_money(order.currency)
@@ -433,11 +440,11 @@ def test_order_query_total_price_is_0(
     order.shipping_method.save()
     order.save()
 
-    staff_api_client.user.user_permissions.add(permission_manage_orders)
-    staff_api_client.user.user_permissions.add(permission_manage_shipping)
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
+    permission_group_manage_shipping.user_set.add(staff_api_client.user)
 
     # when
-    response = staff_api_client.post_graphql(ORDERS_QUERY)
+    response = staff_api_client.post_graphql(ORDERS_FULL_QUERY)
     content = get_graphql_content(response)
 
     # then
@@ -456,7 +463,7 @@ def test_order_query_total_price_is_0(
 
 
 def test_order_query_shows_non_draft_orders(
-    staff_api_client, permission_manage_orders, orders
+    staff_api_client, permission_group_manage_orders, orders
 ):
     query = """
     query OrdersQuery {
@@ -470,17 +477,14 @@ def test_order_query_shows_non_draft_orders(
     }
     """
 
-    staff_api_client.user.user_permissions.add(permission_manage_orders)
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
     response = staff_api_client.post_graphql(query)
     edges = get_graphql_content(response)["data"]["orders"]["edges"]
 
     assert len(edges) == Order.objects.non_draft().count()
 
 
-def test_orders_with_channel(
-    staff_api_client, permission_manage_orders, orders, channel_USD
-):
-    query = """
+QUERY_ORDERS_WITH_CHANNEL = """
     query OrdersQuery($channel: String) {
         orders(first: 10, channel: $channel) {
             edges {
@@ -490,17 +494,46 @@ def test_orders_with_channel(
             }
         }
     }
-    """
+"""
 
-    staff_api_client.user.user_permissions.add(permission_manage_orders)
+
+def test_orders_with_channel(
+    staff_api_client, permission_group_manage_orders, orders, channel_USD
+):
+    # given
+    query = QUERY_ORDERS_WITH_CHANNEL
+
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
     variables = {"channel": channel_USD.slug}
+
+    # when
     response = staff_api_client.post_graphql(query, variables)
+
+    # then
     edges = get_graphql_content(response)["data"]["orders"]["edges"]
 
     assert len(edges) == 3
 
 
-def test_orders_without_channel(staff_api_client, permission_manage_orders, orders):
+def test_orders_with_channel_no_access_to_channel(
+    staff_api_client, permission_group_all_perms_channel_USD_only, orders, channel_JPY
+):
+    # given
+    query = QUERY_ORDERS_WITH_CHANNEL
+
+    permission_group_all_perms_channel_USD_only.user_set.add(staff_api_client.user)
+    variables = {"channel": channel_JPY.slug}
+
+    # when
+    response = staff_api_client.post_graphql(query, variables)
+
+    # then
+    assert_no_permission(response)
+
+
+def test_orders_without_channel(
+    staff_api_client, permission_group_manage_orders, orders
+):
     query = """
     query OrdersQuery {
         orders(first: 10) {
@@ -513,7 +546,7 @@ def test_orders_without_channel(staff_api_client, permission_manage_orders, orde
     }
     """
 
-    staff_api_client.user.user_permissions.add(permission_manage_orders)
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
     response = staff_api_client.post_graphql(query)
     edges = get_graphql_content(response)["data"]["orders"]["edges"]
 
@@ -538,7 +571,7 @@ def test_order_query_customer(api_client):
 
 
 @pytest.mark.parametrize(
-    "total_authorized, total_charged, expected_status",
+    ("total_authorized", "total_charged", "expected_status"),
     [
         (Decimal("98.40"), Decimal("0"), OrderAuthorizeStatusEnum.FULL.name),
         (Decimal("0"), Decimal("98.40"), OrderAuthorizeStatusEnum.FULL.name),
@@ -554,21 +587,22 @@ def test_order_query_authorize_status(
     total_charged,
     expected_status,
     staff_api_client,
-    permission_manage_orders,
-    permission_manage_shipping,
+    permission_group_manage_orders,
+    permission_group_manage_shipping,
     fulfilled_order,
 ):
     # given
     assert fulfilled_order.total.gross.amount == Decimal("98.40")
     fulfilled_order.total_authorized_amount = total_authorized
     fulfilled_order.total_charged_amount = total_charged
+    update_order_authorize_status(fulfilled_order, Decimal(0))
     fulfilled_order.save()
 
-    staff_api_client.user.user_permissions.add(permission_manage_orders)
-    staff_api_client.user.user_permissions.add(permission_manage_shipping)
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
+    permission_group_manage_shipping.user_set.add(staff_api_client.user)
 
     # when
-    response = staff_api_client.post_graphql(ORDERS_QUERY)
+    response = staff_api_client.post_graphql(ORDERS_FULL_QUERY)
     content = get_graphql_content(response)
 
     # then
@@ -577,7 +611,7 @@ def test_order_query_authorize_status(
 
 
 @pytest.mark.parametrize(
-    "total_authorized, total_charged, expected_status",
+    ("total_authorized", "total_charged", "expected_status"),
     [
         (Decimal("10.40"), Decimal("0"), OrderChargeStatusEnum.NONE.name),
         (Decimal("98.40"), Decimal("0"), OrderChargeStatusEnum.NONE.name),
@@ -592,21 +626,22 @@ def test_order_query_charge_status(
     total_charged,
     expected_status,
     staff_api_client,
-    permission_manage_orders,
-    permission_manage_shipping,
+    permission_group_manage_orders,
+    permission_group_manage_shipping,
     fulfilled_order,
 ):
     # given
     assert fulfilled_order.total.gross.amount == Decimal("98.40")
     fulfilled_order.total_authorized_amount = total_authorized
     fulfilled_order.total_charged_amount = total_charged
+    update_order_charge_status(fulfilled_order, Decimal(0))
     fulfilled_order.save()
 
-    staff_api_client.user.user_permissions.add(permission_manage_orders)
-    staff_api_client.user.user_permissions.add(permission_manage_shipping)
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
+    permission_group_manage_shipping.user_set.add(staff_api_client.user)
 
     # when
-    response = staff_api_client.post_graphql(ORDERS_QUERY)
+    response = staff_api_client.post_graphql(ORDERS_FULL_QUERY)
     content = get_graphql_content(response)
 
     # then
@@ -616,8 +651,8 @@ def test_order_query_charge_status(
 
 def test_order_query_payment_status_with_total_fulfillment_refund_equal_to_order_total(
     staff_api_client,
-    permission_manage_orders,
-    permission_manage_shipping,
+    permission_group_manage_orders,
+    permission_group_manage_shipping,
     fulfilled_order,
 ):
     # given
@@ -625,11 +660,11 @@ def test_order_query_payment_status_with_total_fulfillment_refund_equal_to_order
         tracking_number="123", total_refund_amount=fulfilled_order.total.gross.amount
     )
 
-    staff_api_client.user.user_permissions.add(permission_manage_orders)
-    staff_api_client.user.user_permissions.add(permission_manage_shipping)
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
+    permission_group_manage_shipping.user_set.add(staff_api_client.user)
 
     # when
-    response = staff_api_client.post_graphql(ORDERS_QUERY)
+    response = staff_api_client.post_graphql(ORDERS_FULL_QUERY)
     content = get_graphql_content(response)
 
     # then
@@ -639,8 +674,8 @@ def test_order_query_payment_status_with_total_fulfillment_refund_equal_to_order
 
 def test_order_query_with_transactions_details(
     staff_api_client,
-    permission_manage_orders,
-    permission_manage_shipping,
+    permission_group_manage_orders,
+    permission_group_manage_shipping,
     fulfilled_order,
     shipping_zone,
 ):
@@ -658,59 +693,74 @@ def test_order_query_with_transactions_details(
     order.shipping_method.store_value_in_private_metadata({"test": private_value})
     order.shipping_method.save()
     order.save()
+    transaction_event(
+        order=order,
+        user=None,
+        app=None,
+        reference="ref-123",
+        message="Message",
+    )
     transactions = TransactionItem.objects.bulk_create(
         [
             TransactionItem(
                 order_id=order.id,
-                status="Authorized",
-                type="Credit card",
-                reference="123",
+                message="Authorized",
+                name="Credit card",
+                psp_reference="123",
                 currency="USD",
                 authorized_value=Decimal("15"),
-                available_actions=[TransactionAction.CHARGE, TransactionAction.VOID],
+                available_actions=[TransactionAction.CHARGE, TransactionAction.CANCEL],
             ),
             TransactionItem(
                 order_id=order.id,
-                status="Authorized second credit card",
-                type="Credit card",
-                reference="321",
+                message="Authorized second credit card",
+                name="Credit card",
+                psp_reference="321",
                 currency="USD",
                 authorized_value=Decimal("10"),
-                available_actions=[TransactionAction.CHARGE, TransactionAction.VOID],
+                available_actions=[TransactionAction.CHARGE, TransactionAction.CANCEL],
             ),
             TransactionItem(
                 order_id=order.id,
-                status="Captured",
-                type="Credit card",
-                reference="321",
+                message="Captured",
+                name="Credit card",
+                psp_reference="111",
                 currency="USD",
                 charged_value=Decimal("15"),
                 available_actions=[TransactionAction.REFUND],
+            ),
+            TransactionItem(
+                order_id=order.id,
+                message="Captured",
+                name="Credit card",
+                psp_reference="111",
+                currency="USD",
+                canceled_value=Decimal("19"),
+                available_actions=[],
             ),
         ]
     )
     update_order_authorize_data(order)
     update_order_charge_data(order)
-    event_status = TransactionStatus.FAILURE
     event_reference = "PSP-ref"
-    event_name = "Failed authorization"
+    event_message = "Failed authorization"
     TransactionEvent.objects.bulk_create(
         [
             TransactionEvent(
-                name=event_name,
-                status=event_status,
-                reference=event_reference,
+                message=event_message,
+                psp_reference=f"{event_reference}{transaction.token}",
                 transaction=transaction,
+                currency=transaction.currency,
             )
             for transaction in transactions
         ]
     )
 
-    staff_api_client.user.user_permissions.add(permission_manage_orders)
-    staff_api_client.user.user_permissions.add(permission_manage_shipping)
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
+    permission_group_manage_shipping.user_set.add(staff_api_client.user)
 
     # when
-    response = staff_api_client.post_graphql(ORDERS_QUERY)
+    response = staff_api_client.post_graphql(ORDERS_FULL_QUERY)
     content = get_graphql_content(response)
 
     # then
@@ -727,21 +777,23 @@ def test_order_query_with_transactions_details(
     assert len(order_data["payments"]) == order.payments.count()
     assert Decimal(order_data["totalAuthorized"]["amount"]) == Decimal("25")
     assert Decimal(order_data["totalCaptured"]["amount"]) == Decimal("15")
+    assert Decimal(order_data["totalCharged"]["amount"]) == Decimal("15")
+    assert Decimal(order_data["totalCanceled"]["amount"]) == Decimal("19")
 
     assert Decimal(str(order_data["totalBalance"]["amount"])) == Decimal("-83.4")
 
     for transaction in order_data["transactions"]:
         assert len(transaction["events"]) == 1
         event = transaction["events"][0]
-        assert event["name"] == event_name
-        assert event["status"] == TransactionStatusEnum.FAILURE.name
-        assert event["reference"] == event_reference
+        assert event["message"] == event_message
+        _, expected_uuid = graphene.Node.from_global_id(transaction.get("id"))
+        assert event["pspReference"] == f"{event_reference}{expected_uuid}"
 
 
 def test_order_query_shipping_method_channel_listing_does_not_exist(
     staff_api_client,
-    permission_manage_orders,
-    permission_manage_shipping,
+    permission_group_manage_orders,
+    permission_group_manage_shipping,
     order_with_lines,
 ):
     # given
@@ -754,11 +806,11 @@ def test_order_query_shipping_method_channel_listing_does_not_exist(
         shipping_method=shipping_method, channel=order.channel
     ).delete()
 
-    staff_api_client.user.user_permissions.add(permission_manage_orders)
-    staff_api_client.user.user_permissions.add(permission_manage_shipping)
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
+    permission_group_manage_shipping.user_set.add(staff_api_client.user)
 
     # when
-    response = staff_api_client.post_graphql(ORDERS_QUERY)
+    response = staff_api_client.post_graphql(ORDERS_FULL_QUERY)
     content = get_graphql_content(response)
 
     # then
@@ -768,8 +820,8 @@ def test_order_query_shipping_method_channel_listing_does_not_exist(
 
 def test_order_query_external_shipping_method(
     staff_api_client,
-    permission_manage_orders,
-    permission_manage_shipping,
+    permission_group_manage_orders,
+    permission_group_manage_shipping,
     order_with_lines,
 ):
     external_shipping_method_id = graphene.Node.to_global_id("app", "1:external123")
@@ -780,11 +832,11 @@ def test_order_query_external_shipping_method(
     order.private_metadata = {PRIVATE_META_APP_SHIPPING_ID: external_shipping_method_id}
     order.save()
 
-    staff_api_client.user.user_permissions.add(permission_manage_orders)
-    staff_api_client.user.user_permissions.add(permission_manage_shipping)
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
+    permission_group_manage_shipping.user_set.add(staff_api_client.user)
 
     # when
-    response = staff_api_client.post_graphql(ORDERS_QUERY)
+    response = staff_api_client.post_graphql(ORDERS_FULL_QUERY)
     content = get_graphql_content(response)
 
     # then
@@ -798,8 +850,8 @@ def test_order_query_external_shipping_method(
 
 def test_order_discounts_query(
     staff_api_client,
-    permission_manage_orders,
-    permission_manage_shipping,
+    permission_group_manage_orders,
+    permission_group_manage_shipping,
     draft_order_with_fixed_discount_order,
 ):
     # given
@@ -809,11 +861,11 @@ def test_order_discounts_query(
 
     discount = order.discounts.get()
 
-    staff_api_client.user.user_permissions.add(permission_manage_orders)
-    staff_api_client.user.user_permissions.add(permission_manage_shipping)
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
+    permission_group_manage_shipping.user_set.add(staff_api_client.user)
 
     # when
-    response = staff_api_client.post_graphql(ORDERS_QUERY)
+    response = staff_api_client.post_graphql(ORDERS_FULL_QUERY)
     content = get_graphql_content(response)
 
     # then
@@ -831,8 +883,8 @@ def test_order_discounts_query(
 
 def test_order_line_discount_query(
     staff_api_client,
-    permission_manage_orders,
-    permission_manage_shipping,
+    permission_group_manage_orders,
+    permission_group_manage_shipping,
     draft_order_with_fixed_discount_order,
 ):
     # given
@@ -848,11 +900,11 @@ def test_order_line_discount_query(
 
     line_with_discount_id = graphene.Node.to_global_id("OrderLine", line.pk)
 
-    staff_api_client.user.user_permissions.add(permission_manage_orders)
-    staff_api_client.user.user_permissions.add(permission_manage_shipping)
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
+    permission_group_manage_shipping.user_set.add(staff_api_client.user)
 
     # when
-    response = staff_api_client.post_graphql(ORDERS_QUERY)
+    response = staff_api_client.post_graphql(ORDERS_FULL_QUERY)
     content = get_graphql_content(response)
 
     # then
@@ -869,8 +921,13 @@ def test_order_line_discount_query(
     unit_discount_amount = quantize_price(
         Decimal(line_with_discount["unitDiscount"]["amount"]), currency=order.currency
     )
-    undiscounted_unit_price = quantize_price(
+
+    undiscounted_unit_price_gross = quantize_price(
         Decimal(line_with_discount["undiscountedUnitPrice"]["gross"]["amount"]),
+        currency=order.currency,
+    )
+    undiscounted_unit_price_net = quantize_price(
+        Decimal(line_with_discount["undiscountedUnitPrice"]["net"]["amount"]),
         currency=order.currency,
     )
 
@@ -880,19 +937,27 @@ def test_order_line_discount_query(
     expected_unit_discount_amount = quantize_price(
         line.unit_discount.amount, currency=order.currency
     )
-    expected_undiscounted_unit_price = quantize_price(
+    expected_undiscounted_unit_price_gross = quantize_price(
         line.undiscounted_unit_price.gross.amount, currency=order.currency
+    )
+    expected_calculated_gross = quantize_price(
+        line.undiscounted_unit_price.net.amount * (line.tax_rate + 1), line.currency
+    )
+    expected_undiscounted_unit_price_net = quantize_price(
+        line.undiscounted_unit_price.net.amount, currency=order.currency
     )
 
     assert unit_gross_amount == expected_unit_price_gross_amount
     assert unit_discount_amount == expected_unit_discount_amount
-    assert undiscounted_unit_price == expected_undiscounted_unit_price
+    assert undiscounted_unit_price_gross == expected_undiscounted_unit_price_gross
+    assert undiscounted_unit_price_net == expected_undiscounted_unit_price_net
+    assert undiscounted_unit_price_gross == expected_calculated_gross
 
 
 def test_order_query_in_pln_channel(
     staff_api_client,
-    permission_manage_orders,
-    permission_manage_shipping,
+    permission_group_manage_orders,
+    permission_group_manage_shipping,
     order_with_lines_channel_PLN,
     shipping_zone,
     channel_PLN,
@@ -900,11 +965,11 @@ def test_order_query_in_pln_channel(
     # given
     shipping_zone.channels.add(channel_PLN)
     order = order_with_lines_channel_PLN
-    staff_api_client.user.user_permissions.add(permission_manage_orders)
-    staff_api_client.user.user_permissions.add(permission_manage_shipping)
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
+    permission_group_manage_shipping.user_set.add(staff_api_client.user)
 
     # when
-    response = staff_api_client.post_graphql(ORDERS_QUERY)
+    response = staff_api_client.post_graphql(ORDERS_FULL_QUERY)
     content = get_graphql_content(response)
 
     # then
@@ -944,16 +1009,18 @@ def test_order_query_in_pln_channel(
         channel_id=order.channel_id
     )
     assert float(expected_shipping_price.price.amount) == method["price"]["amount"]
-    assert float(expected_shipping_price.minimum_order_price.amount) == (
-        method["minimumOrderPrice"]["amount"]
+    assert (
+        float(expected_shipping_price.minimum_order_price.amount)
+        == (method["minimumOrderPrice"]["amount"])
     )
 
 
 QUERY_ORDER_BY_ID = """
     query OrderQuery($id: ID) {
         order(id: $id) {
-            number
             id
+            number
+            status
         }
     }
 """
@@ -988,7 +1055,7 @@ def test_query_order_as_app(app_api_client, order):
     assert order_data["id"] == graphene.Node.to_global_id("Order", order.id)
 
 
-def test_staff_query_order_by_old_id(staff_api_client, order, permission_manage_orders):
+def test_staff_query_order_by_old_id(staff_api_client, order):
     # given
     order.use_old_id = True
     order.save(update_fields=["use_old_id"])
@@ -1028,7 +1095,7 @@ def test_staff_query_order_by_invalid_id(staff_api_client, order):
 
     # then
     assert len(content["errors"]) == 1
-    assert content["errors"][0]["message"] == f"Couldn't resolve id: {id}."
+    assert content["errors"][0]["message"] == f"Invalid ID: {id}. Expected: Order."
     assert content["data"]["order"] is None
 
 
@@ -1072,6 +1139,24 @@ def test_query_order_by_external_reference(user_api_client, order):
     assert data["number"] == str(order.number)
     assert data["externalReference"] == ext_ref
     assert data["id"] == graphene.Node.to_global_id("Order", order.id)
+
+
+@pytest.mark.parametrize("external_reference", ['" "', "not-existing"])
+def test_query_order_by_not_existing_external_reference(
+    external_reference, user_api_client, order
+):
+    # given
+    query = QUERY_ORDER_BY_EXTERNAL_REFERENCE
+    order.external_reference = "test-ext-ref"
+    order.save(update_fields=["external_reference"])
+    variables = {"externalReference": external_reference}
+
+    # when
+    response = user_api_client.post_graphql(query, variables)
+    content = get_graphql_content(response)
+
+    # then
+    assert content["data"]["order"] is None
 
 
 def test_query_order_by_external_reference_and_id(user_api_client, order):
@@ -1127,8 +1212,6 @@ QUERY_ORDER_FIELDS_BY_ID = """
 
 
 def test_query_order_fields_order_with_new_id_by_staff_no_perm(order, staff_api_client):
-    """Ensure that all fields that are available for order owner can be fetched with
-    use of new id by staff user without permissions."""
     # given
     variables = {"id": graphene.Node.to_global_id("Order", order.pk)}
 
@@ -1150,8 +1233,6 @@ def test_query_order_fields_order_with_new_id_by_staff_no_perm(order, staff_api_
 
 
 def test_query_order_fields_order_with_new_id_by_anonymous_user(order, api_client):
-    """Ensure that all fields that are available for order owner can be fetched with
-    use of new id by the customer user."""
     # given
     variables = {"id": graphene.Node.to_global_id("Order", order.pk)}
 
@@ -1173,8 +1254,7 @@ def test_query_order_fields_order_with_new_id_by_anonymous_user(order, api_clien
 
 
 def test_query_order_fields_by_old_id_staff_no_perms(order, staff_api_client):
-    """Ensure that all fields that are available for order owner cannot be fetched with
-    use of old id by staff user without permissions."""
+    """Test that old order IDs require proper user permissions to access sensitive fields."""
     # given
     order.use_old_id = True
     order.save(update_fields=["use_old_id"])
@@ -1189,8 +1269,6 @@ def test_query_order_fields_by_old_id_staff_no_perms(order, staff_api_client):
 
 
 def test_query_order_fields_by_old_id_by_order_owner(order, user_api_client):
-    """Ensure that all fields that are available for order owner can be fetched with
-    use of old id by order owner."""
     # given
     order.use_old_id = True
     order.save(update_fields=["use_old_id"])
@@ -1217,8 +1295,6 @@ def test_query_order_fields_by_old_id_by_order_owner(order, user_api_client):
 def test_query_order_fields_by_old_id_staff_with_perm(
     order, staff_api_client, permission_manage_orders
 ):
-    """Ensure that all fields that are available for order owner can be fetched with
-    use of old id by staff user with manage orders permission."""
     # given
     order.use_old_id = True
     order.save(update_fields=["use_old_id"])
@@ -1247,8 +1323,6 @@ def test_query_order_fields_by_old_id_staff_with_perm(
 def test_query_order_fields_by_old_id_app_with_perm(
     order, app_api_client, permission_manage_orders
 ):
-    """Ensure that all fields that are available for order owner can be fetched with
-    use of old id by app with manage orders permission."""
     # given
     order.use_old_id = True
     order.save(update_fields=["use_old_id"])
@@ -1277,8 +1351,6 @@ def test_query_order_fields_by_old_id_app_with_perm(
 def test_query_order_fields_order_with_old_id_staff_with_perm(
     order, app_api_client, permission_manage_orders
 ):
-    """Ensure that all fields that are available for order owner can be fetched with
-    use of old id by app with manage orders permission."""
     # given
     order.use_old_id = True
     order.save(update_fields=["use_old_id"])
@@ -1305,8 +1377,7 @@ def test_query_order_fields_order_with_old_id_staff_with_perm(
 
 
 def test_query_order_fields_by_old_id_app_no_perm(order, app_api_client):
-    """Ensure that all fields that are available for order owner cannot be fetched with
-    use of old id by app without permissions."""
+    """Test that old order IDs require proper app permissions to access sensitive fields."""
     # given
     order.use_old_id = True
     order.save(update_fields=["use_old_id"])
@@ -1321,7 +1392,7 @@ def test_query_order_fields_by_old_id_app_no_perm(order, app_api_client):
 
 
 def test_order_query_gift_cards(
-    staff_api_client, permission_manage_orders, order_with_lines, gift_card
+    staff_api_client, permission_group_manage_orders, order_with_lines, gift_card
 ):
     query = """
     query OrderQuery($id: ID!) {
@@ -1340,7 +1411,7 @@ def test_order_query_gift_cards(
 
     order_id = graphene.Node.to_global_id("Order", order_with_lines.id)
     variables = {"id": order_id}
-    staff_api_client.user.user_permissions.add(permission_manage_orders)
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
     response = staff_api_client.post_graphql(query, variables)
     content = get_graphql_content(response)
     gift_card_data = content["data"]["order"]["giftCards"][0]
@@ -1394,3 +1465,287 @@ def test_order_display_gross_prices_use_country_exception(
 
     # then
     assert data["displayGrossPrices"] == tax_country_config.display_gross_prices
+
+
+QUERY_ORDERS = """
+    query OrdersQuery {
+        orders(first: 10) {
+            edges {
+                node {
+                    number
+                }
+            }
+        }
+    }
+"""
+
+
+def test_query_orders_by_user_with_access_to_all_channels(
+    order_list,
+    staff_api_client,
+    permission_group_all_perms_all_channels,
+    channel_PLN,
+    channel_JPY,
+    channel_USD,
+):
+    # given
+    user = staff_api_client.user
+    permission_group_all_perms_all_channels.user_set.add(user)
+
+    order_list[0].channel = channel_PLN
+    order_list[1].channel = channel_JPY
+    order_list[2].channel = channel_USD
+
+    Order.objects.bulk_update(order_list, ["channel"])
+
+    # when
+    response = staff_api_client.post_graphql(QUERY_ORDERS)
+    content = get_graphql_content(response)
+
+    # then
+    assert len(content["data"]["orders"]["edges"]) == len(order_list)
+
+
+def test_query_orders_by_user_with_restricted_access_to_channels(
+    order_list,
+    staff_api_client,
+    permission_group_all_perms_channel_USD_only,
+    channel_PLN,
+    channel_JPY,
+    channel_USD,
+):
+    # given
+    user = staff_api_client.user
+    permission_group_all_perms_channel_USD_only.user_set.add(user)
+
+    order_list[0].channel = channel_PLN
+    order_list[1].channel = channel_JPY
+    order_list[2].channel = channel_USD
+
+    Order.objects.bulk_update(order_list, ["channel"])
+
+    # when
+    response = staff_api_client.post_graphql(QUERY_ORDERS)
+    content = get_graphql_content(response)
+
+    # then
+    assert len(content["data"]["orders"]["edges"]) == 1
+    assert content["data"]["orders"]["edges"][0]["node"]["number"] == str(
+        order_list[2].number
+    )
+
+
+def test_query_orders_by_user_with_restricted_access_to_channels_no_acc_channels(
+    order_list,
+    staff_api_client,
+    permission_group_all_perms_without_any_channel,
+    channel_PLN,
+    channel_JPY,
+    channel_USD,
+):
+    """Ensure that query returns no orders when user has no accessible channels."""
+    # given
+    user = staff_api_client.user
+    permission_group_all_perms_without_any_channel.user_set.add(user)
+
+    order_list[0].channel = channel_PLN
+    order_list[1].channel = channel_JPY
+    order_list[2].channel = channel_USD
+
+    Order.objects.bulk_update(order_list, ["channel"])
+
+    # when
+    response = staff_api_client.post_graphql(QUERY_ORDERS)
+    content = get_graphql_content(response)
+
+    # then
+    assert len(content["data"]["orders"]["edges"]) == 0
+
+
+def test_query_orders_by_app(
+    order_list,
+    app_api_client,
+    permission_manage_orders,
+    channel_PLN,
+    channel_JPY,
+    channel_USD,
+):
+    # given
+    order_list[0].channel = channel_PLN
+    order_list[1].channel = channel_JPY
+    order_list[2].channel = channel_USD
+
+    Order.objects.bulk_update(order_list, ["channel"])
+
+    # when
+    response = app_api_client.post_graphql(
+        QUERY_ORDERS, permissions=(permission_manage_orders,)
+    )
+
+    # then
+    content = get_graphql_content(response)
+    assert len(content["data"]["orders"]["edges"]) == len(order_list)
+
+
+def test_query_orders_by_customer(
+    order_list,
+    user_api_client,
+    channel_PLN,
+    channel_JPY,
+    channel_USD,
+):
+    # given
+    order_list[0].channel = channel_PLN
+    order_list[1].channel = channel_JPY
+    order_list[2].channel = channel_USD
+
+    Order.objects.bulk_update(order_list, ["channel"])
+
+    # when
+    response = user_api_client.post_graphql(QUERY_ORDERS)
+
+    # then
+    assert_no_permission(response)
+
+
+QUERY_ORDER_PAYMENT_STATUSES = """
+    query OrderQuery($id: ID!) {
+        order(id: $id) {
+            paymentStatus
+            paymentStatusDisplay
+        }
+    }
+"""
+
+
+@pytest.mark.parametrize(
+    (
+        "order_total",
+        "granted_refund_amount",
+        "total_charged",
+        "expected_payment_status",
+    ),
+    [
+        (Decimal(100), Decimal(0), Decimal(0), PaymentChargeStatusEnum.NOT_CHARGED),
+        (Decimal(100), Decimal(50), Decimal(0), PaymentChargeStatusEnum.NOT_CHARGED),
+        # order total - total granted refund is bigger than total charged
+        (
+            Decimal(100),
+            Decimal(25),
+            Decimal(50),
+            PaymentChargeStatusEnum.PARTIALLY_CHARGED,
+        ),
+        # order total is bigger than total charged
+        (
+            Decimal(100),
+            Decimal(0),
+            Decimal(50),
+            PaymentChargeStatusEnum.PARTIALLY_CHARGED,
+        ),
+        # order total - total granted refund is 0, total charged is 100, order is
+        # marked as fully charged
+        (
+            Decimal(100),
+            Decimal(100),
+            Decimal(100),
+            PaymentChargeStatusEnum.FULLY_CHARGED,
+        ),
+        # order total is 0, total charged is 0, order is fully charged
+        (Decimal(0), Decimal(0), Decimal(0), PaymentChargeStatusEnum.FULLY_CHARGED),
+        # order total - total granted refund is equal to total charged = 0
+        (Decimal(100), Decimal(100), Decimal(0), PaymentChargeStatusEnum.FULLY_CHARGED),
+        # order total - total granted refund is equal to total charged = 50
+        (Decimal(100), Decimal(50), Decimal(50), PaymentChargeStatusEnum.FULLY_CHARGED),
+        # order total - total granted refund is equal to total charged = 100
+        (Decimal(100), Decimal(0), Decimal(100), PaymentChargeStatusEnum.FULLY_CHARGED),
+    ],
+)
+def test_order_payment_status_with_transaction_and_granted_refunds(
+    order_total,
+    granted_refund_amount,
+    total_charged,
+    expected_payment_status,
+    user_api_client,
+    order_with_lines,
+):
+    # given
+    variables = {"id": graphene.Node.to_global_id("Order", order_with_lines.id)}
+    order_with_lines.payment_transactions.create(
+        charged_value=total_charged, currency=order_with_lines.currency
+    )
+    order_with_lines.total_gross_amount = order_total
+    order_with_lines.total_net_amount = order_total
+    OrderGrantedRefund.objects.bulk_create(
+        [
+            OrderGrantedRefund(
+                order=order_with_lines,
+                amount_value=Decimal(0),
+                currency=order_with_lines.currency,
+            ),
+            OrderGrantedRefund(
+                order=order_with_lines,
+                amount_value=granted_refund_amount,
+                currency=order_with_lines.currency,
+            ),
+        ]
+    )
+    order_with_lines.total_charged_amount = total_charged
+    order_with_lines.save()
+    # when
+    response = user_api_client.post_graphql(QUERY_ORDER_PAYMENT_STATUSES, variables)
+    content = get_graphql_content(response)
+    data = content["data"]["order"]
+
+    # then
+    assert data["paymentStatus"] == expected_payment_status.name
+    assert data["paymentStatusDisplay"] == dict(ChargeStatus.CHOICES).get(
+        expected_payment_status.value
+    )
+
+
+@pytest.mark.parametrize(
+    ("order_total", "total_charged", "expected_payment_status"),
+    [
+        (Decimal(100), Decimal(0), PaymentChargeStatusEnum.NOT_CHARGED),
+        # order total is bigger than total charged
+        (
+            Decimal(100),
+            Decimal(50),
+            PaymentChargeStatusEnum.PARTIALLY_CHARGED,
+        ),
+        # order total is 100, total charged is 100, order is fully charged
+        (
+            Decimal(100),
+            Decimal(100),
+            PaymentChargeStatusEnum.FULLY_CHARGED,
+        ),
+        # order total is 0, total charged is 0, order is fully charged
+        (Decimal(0), Decimal(0), PaymentChargeStatusEnum.FULLY_CHARGED),
+    ],
+)
+def test_order_payment_status_with_transaction_and_without_granted_refunds(
+    order_total,
+    total_charged,
+    expected_payment_status,
+    user_api_client,
+    order_with_lines,
+):
+    # given
+    order_with_lines.payment_transactions.create(
+        charged_value=total_charged, currency=order_with_lines.currency
+    )
+    variables = {"id": graphene.Node.to_global_id("Order", order_with_lines.id)}
+    order_with_lines.total_gross_amount = order_total
+    order_with_lines.total_net_amount = order_total
+    order_with_lines.total_charged_amount = total_charged
+    order_with_lines.save()
+    # when
+    response = user_api_client.post_graphql(QUERY_ORDER_PAYMENT_STATUSES, variables)
+    content = get_graphql_content(response)
+    data = content["data"]["order"]
+
+    # then
+    assert data["paymentStatus"] == expected_payment_status.name
+    assert data["paymentStatusDisplay"] == dict(ChargeStatus.CHOICES).get(
+        expected_payment_status.value
+    )

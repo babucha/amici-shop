@@ -9,17 +9,23 @@ from ...product import models
 from ...product.models import ALL_PRODUCTS_PERMISSIONS
 from ..channel.filters import get_channel_slug_from_filter_data
 from ..core.descriptions import ADDED_IN_311, PREVIEW_FEATURE
+from ..core.doc_category import DOC_CATEGORY_ATTRIBUTES
 from ..core.enums import MeasurementUnitsEnum
 from ..core.filters import (
+    BooleanWhereFilter,
     EnumFilter,
     GlobalIDFilter,
     GlobalIDMultipleChoiceFilter,
+    GlobalIDMultipleChoiceWhereFilter,
+    GlobalIDWhereFilter,
     ListObjectTypeFilter,
     MetadataFilterBase,
-    OperationObjectTypeFilter,
+    MetadataWhereFilterBase,
+    OperationObjectTypeWhereFilter,
     filter_slug_list,
 )
 from ..core.types import (
+    BaseInputObjectType,
     ChannelFilterInputObjectType,
     FilterInputObjectType,
     NonNullList,
@@ -28,7 +34,7 @@ from ..core.types import (
 from ..core.types.filter_input import FilterInputDescriptions, WhereInputObjectType
 from ..core.utils import from_global_id_or_error
 from ..utils import get_user_or_app_from_context
-from ..utils.filters import filter_by_id, filter_by_string_field
+from ..utils.filters import filter_by_ids, filter_where_by_string_field
 from .enums import AttributeEntityTypeEnum, AttributeInputTypeEnum, AttributeTypeEnum
 
 
@@ -81,6 +87,7 @@ def filter_by_attribute_type(qs, _, value):
 class AttributeValueFilter(django_filters.FilterSet):
     search = django_filters.CharFilter(method="filter_search")
     ids = GlobalIDMultipleChoiceFilter(field_name="id")
+    slugs = ListObjectTypeFilter(input_class=graphene.String, method=filter_slug_list)
 
     class Meta:
         model = AttributeValue
@@ -132,15 +139,17 @@ class AttributeFilter(MetadataFilterBase):
 
 class AttributeFilterInput(ChannelFilterInputObjectType):
     class Meta:
+        doc_category = DOC_CATEGORY_ATTRIBUTES
         filterset_class = AttributeFilter
 
 
 class AttributeValueFilterInput(FilterInputObjectType):
     class Meta:
+        doc_category = DOC_CATEGORY_ATTRIBUTES
         filterset_class = AttributeValueFilter
 
 
-class AttributeInputTypeEnumFilterInput(graphene.InputObjectType):
+class AttributeInputTypeEnumFilterInput(BaseInputObjectType):
     eq = AttributeInputTypeEnum(description=FilterInputDescriptions.EQ, required=False)
     one_of = NonNullList(
         AttributeInputTypeEnum,
@@ -148,8 +157,11 @@ class AttributeInputTypeEnumFilterInput(graphene.InputObjectType):
         required=False,
     )
 
+    class Meta:
+        doc_category = DOC_CATEGORY_ATTRIBUTES
 
-class AttributeEntityTypeEnumFilterInput(graphene.InputObjectType):
+
+class AttributeEntityTypeEnumFilterInput(BaseInputObjectType):
     eq = AttributeEntityTypeEnum(description=FilterInputDescriptions.EQ, required=False)
     one_of = NonNullList(
         AttributeEntityTypeEnum,
@@ -157,8 +169,11 @@ class AttributeEntityTypeEnumFilterInput(graphene.InputObjectType):
         required=False,
     )
 
+    class Meta:
+        doc_category = DOC_CATEGORY_ATTRIBUTES
 
-class AttributeTypeEnumFilterInput(graphene.InputObjectType):
+
+class AttributeTypeEnumFilterInput(BaseInputObjectType):
     eq = AttributeTypeEnum(description=FilterInputDescriptions.EQ, required=False)
     one_of = NonNullList(
         AttributeTypeEnum,
@@ -166,8 +181,11 @@ class AttributeTypeEnumFilterInput(graphene.InputObjectType):
         required=False,
     )
 
+    class Meta:
+        doc_category = DOC_CATEGORY_ATTRIBUTES
 
-class MeasurementUnitsEnumFilterInput(graphene.InputObjectType):
+
+class MeasurementUnitsEnumFilterInput(BaseInputObjectType):
     eq = MeasurementUnitsEnum(description=FilterInputDescriptions.EQ, required=False)
     one_of = NonNullList(
         MeasurementUnitsEnum,
@@ -175,13 +193,16 @@ class MeasurementUnitsEnumFilterInput(graphene.InputObjectType):
         required=False,
     )
 
+    class Meta:
+        doc_category = DOC_CATEGORY_ATTRIBUTES
+
 
 def filter_attribute_name(qs, _, value):
-    return filter_by_string_field(qs, "name", value)
+    return filter_where_by_string_field(qs, "name", value)
 
 
 def filter_attribute_slug(qs, _, value):
-    return filter_by_string_field(qs, "slug", value)
+    return filter_where_by_string_field(qs, "slug", value)
 
 
 def filter_with_choices(qs, _, value):
@@ -190,68 +211,74 @@ def filter_with_choices(qs, _, value):
         return qs.filter(lookup)
     elif value is False:
         return qs.exclude(lookup)
-    return qs
+    return qs.none()
 
 
 def filter_attribute_input_type(qs, _, value):
-    return filter_by_string_field(qs, "input_type", value)
+    return filter_where_by_string_field(qs, "input_type", value)
 
 
 def filter_attribute_entity_type(qs, _, value):
-    return filter_by_string_field(qs, "entity_type", value)
+    return filter_where_by_string_field(qs, "entity_type", value)
 
 
 def filter_attribute_type(qs, _, value):
-    return filter_by_string_field(qs, "type", value)
+    return filter_where_by_string_field(qs, "type", value)
 
 
 def filter_attribute_unit(qs, _, value):
-    return filter_by_string_field(qs, "unit", value)
+    return filter_where_by_string_field(qs, "unit", value)
 
 
-class AttributeWhere(MetadataFilterBase):
-    ids = GlobalIDMultipleChoiceFilter(method=filter_by_id("Attribute"))
-    name = OperationObjectTypeFilter(
+def where_filter_attributes_by_product_types(qs, field, value, requestor, channel_slug):
+    if not value:
+        return qs.none()
+
+    return filter_attributes_by_product_types(qs, field, value, requestor, channel_slug)
+
+
+class AttributeWhere(MetadataWhereFilterBase):
+    ids = GlobalIDMultipleChoiceWhereFilter(method=filter_by_ids("Attribute"))
+    name = OperationObjectTypeWhereFilter(
         input_class=StringFilterInput, method=filter_attribute_name
     )
-    slug = OperationObjectTypeFilter(
+    slug = OperationObjectTypeWhereFilter(
         input_class=StringFilterInput, method=filter_attribute_slug
     )
-    with_choices = django_filters.BooleanFilter(method=filter_with_choices)
-    input_type = OperationObjectTypeFilter(
+    with_choices = BooleanWhereFilter(method=filter_with_choices)
+    input_type = OperationObjectTypeWhereFilter(
         AttributeInputTypeEnumFilterInput, method=filter_attribute_input_type
     )
-    entity_type = OperationObjectTypeFilter(
+    entity_type = OperationObjectTypeWhereFilter(
         AttributeEntityTypeEnumFilterInput, method=filter_attribute_entity_type
     )
-    type = OperationObjectTypeFilter(
+    type = OperationObjectTypeWhereFilter(
         AttributeTypeEnumFilterInput, method=filter_attribute_type
     )
-    unit = OperationObjectTypeFilter(
+    unit = OperationObjectTypeWhereFilter(
         MeasurementUnitsEnumFilterInput, method=filter_attribute_unit
     )
-    in_collection = GlobalIDFilter(method="filter_in_collection")
-    in_category = GlobalIDFilter(method="filter_in_category")
+    in_collection = GlobalIDWhereFilter(method="filter_in_collection")
+    in_category = GlobalIDWhereFilter(method="filter_in_category")
+    value_required = BooleanWhereFilter()
+    visible_in_storefront = BooleanWhereFilter()
+    filterable_in_dashboard = BooleanWhereFilter()
 
     class Meta:
         model = Attribute
-        fields = [
-            "value_required",
-            "visible_in_storefront",
-            "filterable_in_dashboard",
-        ]
+        fields = []
 
     def filter_in_collection(self, qs, name, value):
         requestor = get_user_or_app_from_context(self.request)
         channel_slug = get_channel_slug_from_filter_data(self.data)
-        return filter_attributes_by_product_types(
+        return where_filter_attributes_by_product_types(
             qs, name, value, requestor, channel_slug
         )
 
     def filter_in_category(self, qs, name, value):
         requestor = get_user_or_app_from_context(self.request)
         channel_slug = get_channel_slug_from_filter_data(self.data)
-        return filter_attributes_by_product_types(
+        return where_filter_attributes_by_product_types(
             qs, name, value, requestor, channel_slug
         )
 
@@ -260,3 +287,4 @@ class AttributeWhereInput(WhereInputObjectType):
     class Meta:
         filterset_class = AttributeWhere
         description = "Where filtering options." + ADDED_IN_311 + PREVIEW_FEATURE
+        doc_category = DOC_CATEGORY_ATTRIBUTES

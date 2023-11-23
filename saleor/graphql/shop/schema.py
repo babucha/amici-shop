@@ -3,7 +3,9 @@ import graphene
 from ...channel import models as channel_models
 from ...permission.enums import GiftcardPermissions, OrderPermissions
 from ..channel.types import OrderSettings
+from ..core.context import get_database_connection_name
 from ..core.descriptions import DEPRECATED_IN_3X_FIELD, DEPRECATED_IN_3X_MUTATION
+from ..core.doc_category import DOC_CATEGORY_GIFT_CARDS, DOC_CATEGORY_ORDERS
 from ..core.fields import PermissionsField
 from ..site.dataloaders import load_site_callback
 from ..translations.mutations import ShopSettingsTranslate
@@ -39,20 +41,25 @@ class ShopQueries(graphene.ObjectType):
             "Use the `channel` query to fetch the `orderSettings` field instead."
         ),
         permissions=[OrderPermissions.MANAGE_ORDERS],
+        doc_category=DOC_CATEGORY_ORDERS,
     )
     gift_card_settings = PermissionsField(
         GiftCardSettings,
         description="Gift card related settings from site settings.",
         required=True,
         permissions=[GiftcardPermissions.MANAGE_GIFT_CARD],
+        doc_category=DOC_CATEGORY_GIFT_CARDS,
     )
 
     def resolve_shop(self, _info):
         return Shop()
 
-    def resolve_order_settings(self, _info):
+    def resolve_order_settings(self, info):
         channel = (
-            channel_models.Channel.objects.filter(is_active=True)
+            channel_models.Channel.objects.using(
+                get_database_connection_name(info.context)
+            )
+            .filter(is_active=True)
             .order_by("slug")
             .first()
         )
@@ -77,7 +84,10 @@ class ShopMutations(graphene.ObjectType):
     staff_notification_recipient_update = StaffNotificationRecipientUpdate.Field()
     staff_notification_recipient_delete = StaffNotificationRecipientDelete.Field()
 
-    shop_domain_update = ShopDomainUpdate.Field()
+    shop_domain_update = ShopDomainUpdate.Field(
+        deprecation_reason=DEPRECATED_IN_3X_MUTATION
+        + " Use `PUBLIC_URL` environment variable instead."
+    )
     shop_settings_update = ShopSettingsUpdate.Field()
     shop_fetch_tax_rates = ShopFetchTaxRates.Field(
         deprecation_reason=DEPRECATED_IN_3X_MUTATION

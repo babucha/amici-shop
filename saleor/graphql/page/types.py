@@ -1,10 +1,8 @@
-from typing import List
-
 import graphene
 
 from ...attribute import models as attribute_models
 from ...page import models
-from ...permission.enums import PagePermissions
+from ...permission.enums import PagePermissions, PageTypePermissions
 from ..attribute.filters import AttributeFilterInput, AttributeWhereInput
 from ..attribute.types import Attribute, AttributeCountableConnection, SelectedAttribute
 from ..core import ResolveInfo
@@ -13,7 +11,9 @@ from ..core.connection import (
     create_connection_slice,
     filter_connection_queryset,
 )
+from ..core.context import get_database_connection_name
 from ..core.descriptions import ADDED_IN_33, DEPRECATED_IN_3X_FIELD, RICH_CONTENT
+from ..core.doc_category import DOC_CATEGORY_PAGES
 from ..core.federation import federated_entity, resolve_federation_references
 from ..core.fields import FilterConnectionField, JSONString, PermissionsField
 from ..core.scalars import Date
@@ -31,9 +31,9 @@ from .dataloaders import (
 
 @federated_entity("id")
 class PageType(ModelObjectType[models.PageType]):
-    id = graphene.GlobalID(required=True)
-    name = graphene.String(required=True)
-    slug = graphene.String(required=True)
+    id = graphene.GlobalID(required=True, description="ID of the page type.")
+    name = graphene.String(required=True, description="Name of the page type.")
+    slug = graphene.String(required=True, description="Slug of the page type.")
     attributes = NonNullList(
         Attribute, description="Page attributes of that page type."
     )
@@ -44,6 +44,7 @@ class PageType(ModelObjectType[models.PageType]):
         description="Attributes that can be assigned to the page type.",
         permissions=[
             PagePermissions.MANAGE_PAGES,
+            PageTypePermissions.MANAGE_PAGE_TYPES_AND_ATTRIBUTES,
         ],
     )
     has_pages = PermissionsField(
@@ -51,6 +52,7 @@ class PageType(ModelObjectType[models.PageType]):
         description="Whether page type has pages assigned.",
         permissions=[
             PagePermissions.MANAGE_PAGES,
+            PageTypePermissions.MANAGE_PAGE_TYPES_AND_ATTRIBUTES,
         ],
     )
 
@@ -76,7 +78,7 @@ class PageType(ModelObjectType[models.PageType]):
     ):
         qs = attribute_models.Attribute.objects.get_unassigned_page_type_attributes(
             root.pk
-        )
+        ).using(get_database_connection_name(info.context))
         qs = filter_connection_queryset(qs, kwargs, info.context)
         return create_connection_slice(qs, info, kwargs, AttributeCountableConnection)
 
@@ -89,20 +91,21 @@ class PageType(ModelObjectType[models.PageType]):
         )
 
     @staticmethod
-    def __resolve_references(roots: List["PageType"], _info: ResolveInfo):
+    def __resolve_references(roots: list["PageType"], _info: ResolveInfo):
         return resolve_federation_references(PageType, roots, models.PageType.objects)
 
 
 class PageTypeCountableConnection(CountableConnection):
     class Meta:
+        doc_category = DOC_CATEGORY_PAGES
         node = PageType
 
 
 class Page(ModelObjectType[models.Page]):
-    id = graphene.GlobalID(required=True)
-    seo_title = graphene.String()
-    seo_description = graphene.String()
-    title = graphene.String(required=True)
+    id = graphene.GlobalID(required=True, description="ID of the page.")
+    seo_title = graphene.String(description="Title of the page for SEO.")
+    seo_description = graphene.String(description="Description of the page for SEO.")
+    title = graphene.String(required=True, description="Title of the page.")
     content = JSONString(description="Content of the page." + RICH_CONTENT)
     publication_date = Date(
         deprecation_reason=(
@@ -113,10 +116,16 @@ class Page(ModelObjectType[models.Page]):
     published_at = graphene.DateTime(
         description="The page publication date." + ADDED_IN_33
     )
-    is_published = graphene.Boolean(required=True)
-    slug = graphene.String(required=True)
-    page_type = graphene.Field(PageType, required=True)
-    created = graphene.DateTime(required=True)
+    is_published = graphene.Boolean(
+        required=True, description="Determines if the page is published."
+    )
+    slug = graphene.String(required=True, description="Slug of the page.")
+    page_type = graphene.Field(
+        PageType, required=True, description="Determines the type of page"
+    )
+    created = graphene.DateTime(
+        required=True, description="Date and time at which page was created."
+    )
     content_json = JSONString(
         description="Content of the page." + RICH_CONTENT,
         deprecation_reason=f"{DEPRECATED_IN_3X_FIELD} Use the `content` field instead.",
@@ -161,4 +170,5 @@ class Page(ModelObjectType[models.Page]):
 
 class PageCountableConnection(CountableConnection):
     class Meta:
+        doc_category = DOC_CATEGORY_PAGES
         node = Page

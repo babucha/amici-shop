@@ -1,16 +1,11 @@
 import os.path
 import secrets
+from collections.abc import Collection, Iterable
 from enum import Enum
 from itertools import chain
 from typing import (
     Any,
-    Collection,
-    Dict,
-    Iterable,
-    List,
     Optional,
-    Tuple,
-    Type,
     TypeVar,
     Union,
     cast,
@@ -38,16 +33,19 @@ from ...core.utils.events import call_event
 from ...permission.auth_filters import AuthorizationFilters
 from ...permission.enums import BasePermissionEnum
 from ...permission.utils import (
+    all_permissions_required,
     message_one_of_permissions_required,
     one_of_permissions_or_auth_filter_required,
 )
-from ..core import ResolveInfo
-from ..core.utils import ext_ref_to_global_id_or_error
+from ..account.utils import get_user_accessible_channels
+from ..app.dataloaders import get_app_promise
+from ..core.doc_category import DOC_CATEGORY_MAP
 from ..core.validators import validate_one_of_args_is_in_mutation
 from ..meta.permissions import PRIVATE_META_PERMISSION_MAP, PUBLIC_META_PERMISSION_MAP
 from ..payment.utils import metadata_contains_empty_key
 from ..plugins.dataloaders import get_plugin_manager_promise
 from ..utils import get_nodes, resolve_global_ids_to_primary_keys
+from . import ResolveInfo
 from .context import disallow_replica_in_context, setup_context_user
 from .descriptions import DEPRECATED_IN_3X_FIELD
 from .types import (
@@ -58,7 +56,13 @@ from .types import (
     Upload,
     UploadError,
 )
-from .utils import from_global_id_or_error, snake_to_camel_case
+from .utils import (
+    WebhookEventInfo,
+    ext_ref_to_global_id_or_error,
+    from_global_id_or_error,
+    message_webhook_events,
+    snake_to_camel_case,
+)
 from .utils.error_codes import get_error_code_from_error
 
 
@@ -127,6 +131,7 @@ def attach_error_params(error, params: Optional[dict], error_class_fields: set):
 
 
 class ModelMutationOptions(MutationOptions):
+    doc_category = None
     exclude = None
     model = None
     object_type = None
@@ -157,6 +162,7 @@ class BaseMutation(graphene.Mutation):
         cls,
         auto_permission_message=True,
         description=None,
+        doc_category=None,
         permissions: Optional[Collection[BasePermissionEnum]] = None,
         _meta=None,
         error_type_class=None,
@@ -164,6 +170,8 @@ class BaseMutation(graphene.Mutation):
         errors_mapping=None,
         support_meta_field=False,
         support_private_meta_field=False,
+        auto_webhook_events_message: bool = True,
+        webhook_events_info: Optional[list[WebhookEventInfo]] = None,
         **options,
     ):
         if not _meta:
@@ -178,16 +186,23 @@ class BaseMutation(graphene.Mutation):
         cls._validate_permissions(permissions)
 
         _meta.auto_permission_message = auto_permission_message
-        _meta.permissions = permissions
         _meta.error_type_class = error_type_class
         _meta.error_type_field = error_type_field
         _meta.errors_mapping = errors_mapping
+        _meta.permissions = permissions
         _meta.support_meta_field = support_meta_field
         _meta.support_private_meta_field = support_private_meta_field
 
         if permissions and auto_permission_message:
             permissions_msg = message_one_of_permissions_required(permissions)
             description = f"{description} {permissions_msg}"
+
+        if webhook_events_info and auto_webhook_events_message:
+            description += message_webhook_events(webhook_events_info)
+
+        cls.webhook_events_info = webhook_events_info
+
+        cls.doc_category = doc_category
 
         super().__init_subclass_with_meta__(
             description=description, _meta=_meta, **options
@@ -213,7 +228,7 @@ class BaseMutation(graphene.Mutation):
     def _get_node_by_pk(
         cls,
         info: ResolveInfo,
-        graphene_type: Type[ModelObjectType[MT]],
+        graphene_type: type[ModelObjectType[MT]],
         pk: Union[int, str],
         qs=None,
     ) -> Optional[MT]:
@@ -263,7 +278,7 @@ class BaseMutation(graphene.Mutation):
         node_id: str,
         *,
         field: str = "id",
-        only_type: Type[ModelObjectType[MT]],
+        only_type: type[ModelObjectType[MT]],
         qs: Any = None,
         code: str = "not_found",
     ) -> MT:
@@ -277,7 +292,7 @@ class BaseMutation(graphene.Mutation):
         node_id: Optional[str],
         *,
         field: str = "id",
-        only_type: Type[ModelObjectType[MT]],
+        only_type: type[ModelObjectType[MT]],
         qs: Any = None,
         code: str = "not_found",
     ) -> Optional[MT]:
@@ -332,7 +347,7 @@ class BaseMutation(graphene.Mutation):
         node_id: Optional[str],
         *,
         field: str = "id",
-        only_type: Optional[Type[ObjectType]] = None,
+        only_type: Optional[type[ObjectType]] = None,
         qs: Optional[QuerySet] = None,
         code: str = "not_found",
     ) -> Optional[Model]:
@@ -388,15 +403,15 @@ class BaseMutation(graphene.Mutation):
     @overload
     @classmethod
     def get_nodes_or_error(
-        cls, ids, field, only_type: Type[ModelObjectType[MT]], qs=None, schema=None
-    ) -> List[MT]:
+        cls, ids, field, only_type: type[ModelObjectType[MT]], qs=None, schema=None
+    ) -> list[MT]:
         ...
 
     @overload
     @classmethod
     def get_nodes_or_error(
         cls, ids, field, only_type: Optional[ObjectType] = None, qs=None, schema=None
-    ) -> List[Model]:
+    ) -> list[Model]:
         ...
 
     @classmethod
@@ -484,7 +499,9 @@ class BaseMutation(graphene.Mutation):
         return instance
 
     @classmethod
-    def check_permissions(cls, context, permissions=None, **data):
+    def check_permissions(
+        cls, context, permissions=None, require_all_permissions=False, **data
+    ):
         """Determine whether user or app has rights to perform this mutation.
 
         Default implementation assumes that account is allowed to perform any
@@ -496,7 +513,8 @@ class BaseMutation(graphene.Mutation):
         all_permissions = permissions or cls._meta.permissions
         if not all_permissions:
             return True
-
+        if require_all_permissions:
+            return all_permissions_required(context, all_permissions)
         return one_of_permissions_or_auth_filter_required(context, all_permissions)
 
     @classmethod
@@ -538,11 +556,11 @@ class BaseMutation(graphene.Mutation):
         return cls(errors=errors, **extra)
 
     @staticmethod
-    def call_event(func_obj, *func_args):
-        return call_event(func_obj, *func_args)
+    def call_event(func_obj, *func_args, **kwargs):
+        return call_event(func_obj, *func_args, **kwargs)
 
     @classmethod
-    def update_metadata(cls, instance, meta_data_list: List, is_private: bool = False):
+    def update_metadata(cls, instance, meta_data_list: list, is_private: bool = False):
         if is_private:
             instance.store_value_in_private_metadata(
                 {data.key: data.value for data in meta_data_list}
@@ -553,7 +571,7 @@ class BaseMutation(graphene.Mutation):
             )
 
     @classmethod
-    def validate_metadata_keys(cls, metadata_list: List[dict]):
+    def validate_metadata_keys(cls, metadata_list: list[dict]):
         if metadata_contains_empty_key(metadata_list):
             raise ValidationError(
                 {
@@ -587,6 +605,22 @@ class BaseMutation(graphene.Mutation):
         if not meta_permission:
             raise NotImplementedError(
                 f"Couldn't resolve permission to item type: {type_name}. "
+            )
+
+    @classmethod
+    def check_channel_permissions(
+        cls, info: ResolveInfo, channel_ids: Iterable[Union[UUID, int]]
+    ):
+        # App has access to all channels
+        if get_app_promise(info.context).get():
+            return
+        accessible_channels = get_user_accessible_channels(info, info.context.user)
+        accessible_channel_ids = {str(channel.id) for channel in accessible_channels}
+        channel_ids = {str(channel_id) for channel_id in channel_ids}
+        invalid_channel_ids = channel_ids - accessible_channel_ids
+        if invalid_channel_ids:
+            raise PermissionDenied(
+                message="You don't have access to some objects' channel."
             )
 
 
@@ -632,6 +666,10 @@ class ModelMutation(BaseMutation):
             raise ImproperlyConfigured("model is required for ModelMutation")
         if not _meta:
             _meta = ModelMutationOptions(cls)
+
+        doc_category_key = f"{model._meta.app_label}.{model.__name__}"
+        if "doc_category" not in options and doc_category_key in DOC_CATEGORY_MAP:
+            options["doc_category"] = DOC_CATEGORY_MAP[doc_category_key]
 
         if exclude is None:
             exclude = []
@@ -751,7 +789,6 @@ class ModelMutation(BaseMutation):
     @classmethod
     def post_save_action(cls, info: ResolveInfo, instance, cleaned_input):
         """Perform an action after saving an object and its m2m."""
-        pass
 
     @classmethod
     def perform_mutation(cls, _root, info: ResolveInfo, /, **data):
@@ -773,6 +810,14 @@ class ModelMutation(BaseMutation):
         cls.clean_instance(info, instance)
         cls.save(info, instance, cleaned_input)
         cls._save_m2m(info, instance, cleaned_input)
+
+        # add to cleaned_input popped metadata to allow running post save events
+        # that depends on the metadata inputs
+        if metadata_list:
+            cleaned_input["metadata"] = metadata_list
+        if private_metadata_list:
+            cleaned_input["private_metadata"] = private_metadata_list
+
         cls.post_save_action(info, instance, cleaned_input)
         return cls.success_response(instance)
 
@@ -807,6 +852,41 @@ class ModelWithExtRefMutation(ModelMutation):
             return cls.get_node_or_error(info, object_id, only_type=model_type, qs=qs)
 
 
+class ModelWithRestrictedChannelAccessMutation(ModelMutation):
+    class Meta:
+        abstract = True
+
+    @classmethod
+    def perform_mutation(cls, _root, info: ResolveInfo, /, **data):
+        """Perform model mutation.
+
+        Depending on the input data, `mutate` either creates a new instance or
+        updates an existing one. If `id` argument is present, it is assumed
+        that this is an "update" mutation. Otherwise, a new instance is
+        created based on the model associated with this mutation.
+        """
+        instance = cls.get_instance(info, **data)
+        channel_id = cls.get_instance_channel_id(instance, **data)
+        cls.check_channel_permissions(info, [channel_id])
+        data = data.get("input")
+        cleaned_input = cls.clean_input(info, instance, data)
+        metadata_list = cleaned_input.pop("metadata", None)
+        private_metadata_list = cleaned_input.pop("private_metadata", None)
+        instance = cls.construct_instance(instance, cleaned_input)
+
+        cls.validate_and_update_metadata(instance, metadata_list, private_metadata_list)
+        cls.clean_instance(info, instance)
+        cls.save(info, instance, cleaned_input)
+        cls._save_m2m(info, instance, cleaned_input)
+        cls.post_save_action(info, instance, cleaned_input)
+        return cls.success_response(instance)
+
+    @classmethod
+    def get_instance_channel_id(cls, instance, **data) -> Union[UUID, int]:
+        """Retrieve the instance channel id for channel permission accessible check."""
+        raise NotImplementedError()
+
+
 class ModelDeleteMutation(ModelMutation):
     class Meta:
         abstract = True
@@ -837,6 +917,35 @@ class ModelDeleteMutation(ModelMutation):
         return cls.success_response(instance)
 
 
+class ModelDeleteWithRestrictedChannelAccessMutation(ModelDeleteMutation):
+    class Meta:
+        abstract = True
+
+    @classmethod
+    def perform_mutation(  # type: ignore[override]
+        cls, _root, info: ResolveInfo, /, *, external_reference=None, id=None
+    ):
+        """Perform a mutation that deletes a model instance."""
+        instance = cls.get_instance(info, external_reference=external_reference, id=id)
+        channel_id = cls.get_instance_channel_id(instance)
+        cls.check_channel_permissions(info, [channel_id])
+
+        cls.clean_instance(info, instance)
+        db_id = instance.id
+        instance.delete()
+
+        # After the instance is deleted, set its ID to the original database's
+        # ID so that the success response contains ID of the deleted object.
+        instance.id = db_id
+        cls.post_save_action(info, instance, None)
+        return cls.success_response(instance)
+
+    @classmethod
+    def get_instance_channel_id(cls, instance) -> Union[UUID, int]:
+        """Retrieve the instance channel id for channel permission accessible check."""
+        raise NotImplementedError()
+
+
 class BaseBulkMutation(BaseMutation):
     count = graphene.Int(
         required=True, description="Returns how many objects were affected."
@@ -853,8 +962,13 @@ class BaseBulkMutation(BaseMutation):
             raise ImproperlyConfigured("model is required for bulk mutation")
         if not _meta:
             _meta = ModelMutationOptions(cls)
+
         _meta.model = model
         _meta.object_type = object_type
+
+        doc_category_key = f"{model._meta.app_label}.{model.__name__}"
+        if "doc_category" not in kwargs and doc_category_key in DOC_CATEGORY_MAP:
+            kwargs["doc_category"] = DOC_CATEGORY_MAP[doc_category_key]
 
         super().__init_subclass_with_meta__(_meta=_meta, **kwargs)
 
@@ -885,10 +999,10 @@ class BaseBulkMutation(BaseMutation):
     @classmethod
     def perform_mutation(  # type: ignore[override]
         cls, _root, info: ResolveInfo, /, *, ids, **data
-    ) -> Tuple[int, Optional[ValidationError]]:
+    ) -> tuple[int, Optional[ValidationError]]:
         """Perform a mutation that deletes a list of model instances."""
         clean_instance_ids = []
-        errors_dict: Dict[str, List[ValidationError]] = {}
+        errors_dict: dict[str, list[ValidationError]] = {}
         # Allow to pass empty list for dummy mutation
         if not ids:
             return 0, None
@@ -965,6 +1079,73 @@ class ModelBulkDeleteMutation(BaseBulkMutation):
         queryset.delete()
 
 
+class BaseBulkWithRestrictedChannelAccessMutation(BaseBulkMutation):
+    class Meta:
+        abstract = True
+
+    @classmethod
+    def perform_mutation(  # type: ignore[override]
+        cls, _root, info: ResolveInfo, /, *, ids, **data
+    ) -> tuple[int, Optional[ValidationError]]:
+        """Perform a mutation that deletes a list of model instances."""
+        clean_instance_ids = []
+        errors_dict: dict[str, list[ValidationError]] = {}
+        # Allow to pass empty list for dummy mutation
+        if not ids:
+            return 0, None
+        instance_model = cls._meta.model
+        model_type = cls.get_type_for_model()
+        if not model_type:
+            raise ImproperlyConfigured(
+                f"GraphQL type for model {cls._meta.model.__name__} could not be "
+                f"resolved for {cls.__name__}"
+            )
+
+        try:
+            instances = cls.get_nodes_or_error(
+                ids, "id", model_type, schema=info.schema
+            )
+        except ValidationError as error:
+            return 0, error
+
+        channel_ids = cls.get_channel_ids(instances)
+        cls.check_channel_permissions(info, channel_ids)
+
+        for instance, node_id in zip(instances, ids):
+            instance_errors = []
+
+            # catch individual validation errors to raise them later as
+            # a single error
+            try:
+                cls.clean_instance(info, instance)
+            except ValidationError as e:
+                msg = ". ".join(e.messages)
+                instance_errors.append(msg)
+
+            if not instance_errors:
+                clean_instance_ids.append(instance.pk)
+            else:
+                instance_errors_msg = ". ".join(instance_errors)
+                ValidationError({node_id: instance_errors_msg}).update_error_dict(
+                    errors_dict
+                )
+
+        if errors_dict:
+            errors = ValidationError(errors_dict)
+        else:
+            errors = None
+        count = len(clean_instance_ids)
+        if count:
+            qs = instance_model.objects.filter(pk__in=clean_instance_ids)
+            cls.bulk_action(info, qs, **data)
+        return count, errors
+
+    @classmethod
+    def get_channel_ids(cls, instances) -> Iterable[Union[UUID, int]]:
+        """Get the instances channel ids for channel permission accessible check."""
+        raise NotImplementedError()
+
+
 class FileUpload(BaseMutation):
     uploaded_file = graphene.Field(File)
 
@@ -991,6 +1172,8 @@ class FileUpload(BaseMutation):
         cls, _root, info: ResolveInfo, /, file
     ):
         file_data: UploadedFile = cast(UploadedFile, info.context.FILES[file])
+        if not file_data.file:
+            raise ValidationError("Received an empty file.")
 
         # add unique text fragment to the file name to prevent file overriding
         file_name, format = os.path.splitext(file_data.name or "")

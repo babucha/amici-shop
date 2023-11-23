@@ -4,10 +4,12 @@ from django.db.models import Exists, OuterRef, Q
 from ....attribute import models as models
 from ....permission.enums import ProductTypePermissions
 from ....product import models as product_models
+from ....webhook.event_types import WebhookEventAsyncType
 from ...core import ResolveInfo
 from ...core.descriptions import ADDED_IN_310
 from ...core.mutations import ModelDeleteMutation, ModelWithExtRefMutation
 from ...core.types import AttributeError
+from ...core.utils import WebhookEventInfo
 from ...plugins.dataloaders import get_plugin_manager_promise
 from ..types import Attribute, AttributeValue
 
@@ -29,6 +31,16 @@ class AttributeValueDelete(ModelDeleteMutation, ModelWithExtRefMutation):
         permissions = (ProductTypePermissions.MANAGE_PRODUCT_TYPES_AND_ATTRIBUTES,)
         error_type_class = AttributeError
         error_type_field = "attribute_errors"
+        webhook_events_info = [
+            WebhookEventInfo(
+                type=WebhookEventAsyncType.ATTRIBUTE_VALUE_DELETED,
+                description="An attribute value was deleted.",
+            ),
+            WebhookEventInfo(
+                type=WebhookEventAsyncType.ATTRIBUTE_UPDATED,
+                description="An attribute was updated.",
+            ),
+        ]
 
     @classmethod
     def perform_mutation(  # type: ignore[override]
@@ -53,7 +65,7 @@ class AttributeValueDelete(ModelDeleteMutation, ModelWithExtRefMutation):
             Exists(instance.variantassignments.filter(variant_id=OuterRef("id")))
         )
         product_ids = product_models.Product.objects.filter(
-            Q(Exists(instance.productassignments.filter(product_id=OuterRef("id"))))
+            Q(Exists(instance.productvalueassignment.filter(product_id=OuterRef("id"))))
             | Q(Exists(variants.filter(product_id=OuterRef("id"))))
         ).values_list("id", flat=True)
         return list(product_ids)

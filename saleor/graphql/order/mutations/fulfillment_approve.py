@@ -9,11 +9,14 @@ from ....order import FulfillmentStatus
 from ....order.actions import approve_fulfillment
 from ....order.error_codes import OrderErrorCode
 from ....permission.enums import OrderPermissions
+from ....webhook.event_types import WebhookEventAsyncType
 from ...app.dataloaders import get_app_promise
 from ...core import ResolveInfo
 from ...core.descriptions import ADDED_IN_31
+from ...core.doc_category import DOC_CATEGORY_ORDERS
 from ...core.mutations import BaseMutation
 from ...core.types import OrderError
+from ...core.utils import WebhookEventInfo
 from ...plugins.dataloaders import get_plugin_manager_promise
 from ...site.dataloaders import get_site_promise
 from ..types import Fulfillment, Order
@@ -36,9 +39,16 @@ class FulfillmentApprove(BaseMutation):
 
     class Meta:
         description = "Approve existing fulfillment." + ADDED_IN_31
+        doc_category = DOC_CATEGORY_ORDERS
         permissions = (OrderPermissions.MANAGE_ORDERS,)
         error_type_class = OrderError
         error_type_field = "order_errors"
+        webhook_events_info = [
+            WebhookEventInfo(
+                type=WebhookEventAsyncType.FULFILLMENT_APPROVED,
+                description="Fulfillment is approved.",
+            ),
+        ]
 
     @classmethod
     def clean_input(cls, info: ResolveInfo, fulfillment):
@@ -69,14 +79,15 @@ class FulfillmentApprove(BaseMutation):
         *,
         allow_stock_to_be_exceeded,
         id: str,
-        notify_customer
+        notify_customer,
     ):
         user = info.context.user
         user = cast(User, user)
         fulfillment = cls.get_node_or_error(info, id, only_type=Fulfillment)
+        order = fulfillment.order
+        cls.check_channel_permissions(info, [order.channel_id])
         cls.clean_input(info, fulfillment)
 
-        order = fulfillment.order
         manager = get_plugin_manager_promise(info.context).get()
         app = get_app_promise(info.context).get()
         site = get_site_promise(info.context).get()

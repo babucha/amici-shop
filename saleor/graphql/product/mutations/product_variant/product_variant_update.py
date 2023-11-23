@@ -1,5 +1,4 @@
 from collections import defaultdict
-from typing import List, Tuple
 
 import graphene
 from django.core.exceptions import ValidationError
@@ -20,7 +19,7 @@ from ...types import ProductVariant
 from ...utils import get_used_attribute_values_for_variant
 from .product_variant_create import ProductVariantCreate, ProductVariantInput
 
-T_INPUT_MAP = List[Tuple[attribute_models.Attribute, AttrValuesInput]]
+T_INPUT_MAP = list[tuple[attribute_models.Attribute, AttrValuesInput]]
 
 
 class ProductVariantUpdate(ProductVariantCreate, ModelWithExtRefMutation):
@@ -128,6 +127,12 @@ class ProductVariantUpdate(ProductVariantCreate, ModelWithExtRefMutation):
             return instance
 
     @classmethod
+    def set_track_inventory(cls, _info, instance, cleaned_input):
+        track_inventory = cleaned_input.get("track_inventory")
+        if track_inventory is not None:
+            instance.track_inventory = track_inventory
+
+    @classmethod
     def perform_mutation(  # type: ignore[override]
         cls,
         root,
@@ -137,7 +142,7 @@ class ProductVariantUpdate(ProductVariantCreate, ModelWithExtRefMutation):
         external_reference=None,
         id=None,
         sku=None,
-        input
+        input,
     ):
         validate_one_of_args_is_in_mutation(
             "sku",

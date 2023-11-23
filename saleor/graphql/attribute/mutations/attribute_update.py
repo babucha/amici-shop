@@ -4,11 +4,14 @@ from django.core.exceptions import ValidationError
 from ....attribute import models as models
 from ....attribute.error_codes import AttributeErrorCode
 from ....permission.enums import ProductTypePermissions
+from ....webhook.event_types import WebhookEventAsyncType
 from ...core import ResolveInfo
 from ...core.descriptions import ADDED_IN_310, DEPRECATED_IN_3X_INPUT
+from ...core.doc_category import DOC_CATEGORY_ATTRIBUTES
 from ...core.enums import MeasurementUnitsEnum
 from ...core.mutations import ModelWithExtRefMutation
-from ...core.types import AttributeError, NonNullList
+from ...core.types import AttributeError, BaseInputObjectType, NonNullList
+from ...core.utils import WebhookEventInfo
 from ...plugins.dataloaders import get_plugin_manager_promise
 from ..descriptions import AttributeDescriptions, AttributeValueDescriptions
 from ..types import Attribute
@@ -19,8 +22,11 @@ from .mixins import AttributeMixin
 class AttributeValueUpdateInput(AttributeValueInput):
     name = graphene.String(required=False, description=AttributeValueDescriptions.NAME)
 
+    class Meta:
+        doc_category = DOC_CATEGORY_ATTRIBUTES
 
-class AttributeUpdateInput(graphene.InputObjectType):
+
+class AttributeUpdateInput(BaseInputObjectType):
     name = graphene.String(description=AttributeDescriptions.NAME)
     slug = graphene.String(description=AttributeDescriptions.SLUG)
     unit = MeasurementUnitsEnum(description=AttributeDescriptions.UNIT, required=False)
@@ -61,6 +67,15 @@ class AttributeUpdateInput(graphene.InputObjectType):
         description="External ID of this product." + ADDED_IN_310, required=False
     )
 
+    class Meta:
+        doc_category = DOC_CATEGORY_ATTRIBUTES
+        description = (
+            "Represents an input for update of attribute.\n\n"
+            "NOTE: Deprecated fields `filterableInStorefront`, "
+            "`storefrontSearchPosition` and `availableInGrid` are not supported in "
+            "bulk mutations: `attributeBulkCreate`, `attributeBulkUpdate`."
+        )
+
 
 class AttributeUpdate(AttributeMixin, ModelWithExtRefMutation):
     # Needed by AttributeMixin,
@@ -86,6 +101,12 @@ class AttributeUpdate(AttributeMixin, ModelWithExtRefMutation):
         permissions = (ProductTypePermissions.MANAGE_PRODUCT_TYPES_AND_ATTRIBUTES,)
         error_type_class = AttributeError
         error_type_field = "attribute_errors"
+        webhook_events_info = [
+            WebhookEventInfo(
+                type=WebhookEventAsyncType.ATTRIBUTE_UPDATED,
+                description="An attribute was updated.",
+            ),
+        ]
 
     @classmethod
     def clean_remove_values(cls, cleaned_input, instance):

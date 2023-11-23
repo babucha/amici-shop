@@ -1,11 +1,11 @@
 from dataclasses import asdict
 from decimal import Decimal
-from typing import List, Optional
+from typing import Optional
 
 import graphene
 from promise import Promise
 
-from ....core.utils import get_currency_for_country
+from ....core.utils.country import get_active_country
 from ....graphql.core.types import Money, MoneyRange
 from ....permission.enums import ProductPermissions
 from ....product import models
@@ -22,17 +22,12 @@ from ....tax.utils import (
 from ...account import types as account_types
 from ...channel.dataloaders import ChannelByIdLoader
 from ...channel.types import Channel
-from ...core.descriptions import (
-    ADDED_IN_31,
-    ADDED_IN_33,
-    DEPRECATED_IN_3X_FIELD,
-    PREVIEW_FEATURE,
-)
+from ...core.descriptions import ADDED_IN_31, ADDED_IN_33, DEPRECATED_IN_3X_FIELD
+from ...core.doc_category import DOC_CATEGORY_PRODUCTS
 from ...core.fields import PermissionsField
 from ...core.scalars import Date
 from ...core.tracing import traced_resolver
-from ...core.types import ModelObjectType
-from ...discount.dataloaders import DiscountsByDateTimeLoader
+from ...core.types import BaseObjectType, ModelObjectType
 from ...tax.dataloaders import (
     TaxClassByProductIdLoader,
     TaxClassCountryRateByTaxClassIDLoader,
@@ -41,7 +36,6 @@ from ...tax.dataloaders import (
     TaxConfigurationPerCountryByTaxConfigurationIDLoader,
 )
 from ..dataloaders import (
-    CollectionsByProductIdLoader,
     ProductByIdLoader,
     ProductVariantsByProductIdLoader,
     VariantChannelListingByVariantIdAndChannelSlugLoader,
@@ -49,13 +43,19 @@ from ..dataloaders import (
 )
 
 
-class Margin(graphene.ObjectType):
-    start = graphene.Int()
-    stop = graphene.Int()
+class Margin(BaseObjectType):
+    start = graphene.Int(description="The starting value of the margin.")
+    stop = graphene.Int(description="The ending value of the margin.")
+
+    class Meta:
+        doc_category = DOC_CATEGORY_PRODUCTS
+        description = "Metadata for the Margin class."
 
 
 class ProductChannelListing(ModelObjectType[models.ProductChannelListing]):
-    id = graphene.GlobalID(required=True)
+    id = graphene.GlobalID(
+        required=True, description="The ID of the product channel listing."
+    )
     publication_date = Date(
         deprecation_reason=(
             f"{DEPRECATED_IN_3X_FIELD} "
@@ -65,9 +65,19 @@ class ProductChannelListing(ModelObjectType[models.ProductChannelListing]):
     published_at = graphene.DateTime(
         description="The product publication date time." + ADDED_IN_33
     )
-    is_published = graphene.Boolean(required=True)
-    channel = graphene.Field(Channel, required=True)
-    visible_in_listings = graphene.Boolean(required=True)
+    is_published = graphene.Boolean(
+        required=True,
+        description="Indicates if the product is published in the channel.",
+    )
+    channel = graphene.Field(
+        Channel,
+        required=True,
+        description="The channel in which the product is listed.",
+    )
+    visible_in_listings = graphene.Boolean(
+        required=True,
+        description="Indicates product visibility in the channel listings.",
+    )
     available_for_purchase = Date(
         deprecation_reason=(
             f"{DEPRECATED_IN_3X_FIELD} "
@@ -92,7 +102,12 @@ class ProductChannelListing(ModelObjectType[models.ProductChannelListing]):
         permissions=[ProductPermissions.MANAGE_PRODUCTS],
     )
     is_available_for_purchase = graphene.Boolean(
-        description="Whether the product is available for purchase."
+        description=(
+            "Refers to a state that can be set by admins to control whether a product "
+            "is available for purchase in storefronts in this channel. This does not "
+            "guarantee the availability of stock. When set to `False`, this product is "
+            "still visible to customers, but it cannot be purchased."
+        )
     )
     pricing = graphene.Field(
         "saleor.graphql.product.types.products.ProductPricingInfo",
@@ -136,7 +151,7 @@ class ProductChannelListing(ModelObjectType[models.ProductChannelListing]):
         def calculate_margin_with_variants(variants):
             def calculate_margin_with_channel(channel):
                 def calculate_margin_with_channel_listings(
-                    variant_channel_listings: List[
+                    variant_channel_listings: list[
                         Optional[models.ProductVariantChannelListing]
                     ],
                 ):
@@ -175,7 +190,7 @@ class ProductChannelListing(ModelObjectType[models.ProductChannelListing]):
         def calculate_margin_with_variants(variants):
             def calculate_margin_with_channel(channel):
                 def calculate_margin_with_channel_listings(
-                    variant_channel_listings: List[
+                    variant_channel_listings: list[
                         Optional[models.ProductVariantChannelListing]
                     ],
                 ):
@@ -213,17 +228,13 @@ class ProductChannelListing(ModelObjectType[models.ProductChannelListing]):
     @staticmethod
     def resolve_pricing(root: models.ProductChannelListing, info, *, address=None):
         context = info.context
-        address_country = address.country if address is not None else None
 
         channel = ChannelByIdLoader(context).load(root.channel_id)
         product = ProductByIdLoader(context).load(root.product_id)
-        variants = ProductVariantsByProductIdLoader(context).load(root.product_id)
-        collections = CollectionsByProductIdLoader(context).load(root.product_id)
-        discounts = DiscountsByDateTimeLoader(context).load(info.context.request_time)
 
         def load_tax_configuration(data):
-            channel, product, variants, collections, discounts = data
-            country_code = address_country or channel.default_country.code
+            channel, product = data
+            country_code = get_active_country(channel, address_data=address)
 
             def load_tax_country_exceptions(tax_config):
                 tax_class = TaxClassByProductIdLoader(info.context).load(product.id)
@@ -242,7 +253,6 @@ class ProductChannelListing(ModelObjectType[models.ProductChannelListing]):
 
                         def calculate_pricing_info(data):
                             country_rates, default_country_rate_obj = data
-                            local_currency = get_currency_for_country(country_code)
 
                             tax_config_country = next(
                                 (
@@ -270,14 +280,8 @@ class ProductChannelListing(ModelObjectType[models.ProductChannelListing]):
                             prices_entered_with_tax = tax_config.prices_entered_with_tax
 
                             availability = get_product_availability(
-                                product=product,
                                 product_channel_listing=root,
-                                variants=variants,
                                 variants_channel_listing=variants_channel_listing,
-                                collections=collections,
-                                discounts=discounts,
-                                channel=channel,
-                                local_currency=local_currency,
                                 prices_entered_with_tax=prices_entered_with_tax,
                                 tax_calculation_strategy=tax_calculation_strategy,
                                 tax_rate=tax_rate,
@@ -318,12 +322,10 @@ class ProductChannelListing(ModelObjectType[models.ProductChannelListing]):
                 .then(load_tax_country_exceptions)
             )
 
-        return Promise.all([channel, product, variants, collections, discounts]).then(
-            load_tax_configuration
-        )
+        return Promise.all([channel, product]).then(load_tax_configuration)
 
 
-class PreorderThreshold(graphene.ObjectType):
+class PreorderThreshold(BaseObjectType):
     quantity = graphene.Int(
         required=False,
         description="Preorder threshold for product variant in this channel.",
@@ -334,15 +336,22 @@ class PreorderThreshold(graphene.ObjectType):
     )
 
     class Meta:
+        doc_category = DOC_CATEGORY_PRODUCTS
         description = "Represents preorder variant data for channel."
 
 
 class ProductVariantChannelListing(
     ModelObjectType[models.ProductVariantChannelListing]
 ):
-    id = graphene.GlobalID(required=True)
-    channel = graphene.Field(Channel, required=True)
-    price = graphene.Field(Money)
+    id = graphene.GlobalID(
+        required=True, description="The ID of the variant channel listing."
+    )
+    channel = graphene.Field(
+        Channel,
+        required=True,
+        description="The channel to which the variant listing belongs.",
+    )
+    price = graphene.Field(Money, description="The price of the variant.")
     cost_price = graphene.Field(Money, description="Cost price of the variant.")
     margin = PermissionsField(
         graphene.Int,
@@ -352,11 +361,11 @@ class ProductVariantChannelListing(
     preorder_threshold = graphene.Field(
         PreorderThreshold,
         required=False,
-        description="Preorder variant data." + ADDED_IN_31 + PREVIEW_FEATURE,
+        description="Preorder variant data." + ADDED_IN_31,
     )
 
     class Meta:
-        description = "Represents product varaint channel listing."
+        description = "Represents product variant channel listing."
         model = models.ProductVariantChannelListing
         interfaces = [graphene.relay.Node]
 
@@ -379,7 +388,9 @@ class ProductVariantChannelListing(
 
 
 class CollectionChannelListing(ModelObjectType[models.CollectionChannelListing]):
-    id = graphene.GlobalID(required=True)
+    id = graphene.GlobalID(
+        required=True, description="The ID of the collection channel listing."
+    )
     publication_date = Date(
         deprecation_reason=(
             f"{DEPRECATED_IN_3X_FIELD} "
@@ -389,8 +400,15 @@ class CollectionChannelListing(ModelObjectType[models.CollectionChannelListing])
     published_at = graphene.DateTime(
         description="The collection publication date." + ADDED_IN_33
     )
-    is_published = graphene.Boolean(required=True)
-    channel = graphene.Field(Channel, required=True)
+    is_published = graphene.Boolean(
+        required=True,
+        description="Indicates if the collection is published in the channel.",
+    )
+    channel = graphene.Field(
+        Channel,
+        required=True,
+        description="The channel to which the collection belongs.",
+    )
 
     class Meta:
         description = "Represents collection channel listing."

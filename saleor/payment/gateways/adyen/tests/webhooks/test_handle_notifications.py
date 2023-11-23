@@ -167,7 +167,7 @@ def test_handle_authorization_sets_psp_reference(
     payment = payment_adyen_for_checkout
     manager = get_plugins_manager()
     lines, _ = fetch_checkout_lines(checkout)
-    checkout_info = fetch_checkout_info(checkout, lines, [], manager)
+    checkout_info = fetch_checkout_info(checkout, lines, manager)
     total = calculations.calculate_checkout_total_with_gift_cards(
         manager, checkout_info, lines, address
     )
@@ -213,7 +213,7 @@ def test_handle_authorization_for_checkout(
     payment = payment_adyen_for_checkout
     manager = get_plugins_manager()
     lines, _ = fetch_checkout_lines(checkout)
-    checkout_info = fetch_checkout_info(checkout, lines, [], manager)
+    checkout_info = fetch_checkout_info(checkout, lines, manager)
     total = calculations.calculate_checkout_total_with_gift_cards(
         manager, checkout_info, lines, address
     )
@@ -264,7 +264,7 @@ def test_handle_authorization_for_checkout_partial_payment(
     payment = payment_adyen_for_checkout
     manager = get_plugins_manager()
     lines, _ = fetch_checkout_lines(checkout)
-    checkout_info = fetch_checkout_info(checkout, lines, [], manager)
+    checkout_info = fetch_checkout_info(checkout, lines, manager)
     total = calculations.calculate_checkout_total_with_gift_cards(
         manager, checkout_info, lines, address
     )
@@ -312,7 +312,7 @@ def test_handle_authorization_for_checkout_out_of_stock_after_payment(
     payment = payment_adyen_for_checkout
     manager = get_plugins_manager()
     lines, _ = fetch_checkout_lines(checkout)
-    checkout_info = fetch_checkout_info(checkout, lines, [], manager)
+    checkout_info = fetch_checkout_info(checkout, lines, manager)
     total = calculations.calculate_checkout_total_with_gift_cards(
         manager, checkout_info, lines, address
     )
@@ -374,7 +374,7 @@ def test_handle_authorization_for_checkout_that_cannot_be_finalized(
     payment = payment_adyen_for_checkout
     manager = get_plugins_manager()
     lines, _ = fetch_checkout_lines(checkout)
-    checkout_info = fetch_checkout_info(checkout, lines, [], manager)
+    checkout_info = fetch_checkout_info(checkout, lines, manager)
     total = calculations.calculate_checkout_total_with_gift_cards(
         manager, checkout_info, lines, address
     )
@@ -443,7 +443,7 @@ def test_handle_authorization_calls_refund_for_inactive_payment(
     payment = payment_adyen_for_checkout
     manager = get_plugins_manager()
     lines, _ = fetch_checkout_lines(checkout)
-    checkout_info = fetch_checkout_info(checkout, lines, [], manager)
+    checkout_info = fetch_checkout_info(checkout, lines, manager)
     total = calculations.calculate_checkout_total_with_gift_cards(
         manager, checkout_info, lines, address
     )
@@ -529,7 +529,7 @@ def test_handle_authorization_for_checkout_one_of_variants_deleted(
     payment = payment_adyen_for_checkout
     manager = get_plugins_manager()
     lines, _ = fetch_checkout_lines(checkout)
-    checkout_info = fetch_checkout_info(checkout, lines, [], manager)
+    checkout_info = fetch_checkout_info(checkout, lines, manager)
     total = calculations.calculate_checkout_total_with_gift_cards(
         manager, checkout_info, lines, address
     )
@@ -576,7 +576,7 @@ def test_handle_authorization_with_adyen_auto_capture(
     payment = payment_adyen_for_checkout
     manager = get_plugins_manager()
     lines, _ = fetch_checkout_lines(checkout)
-    checkout_info = fetch_checkout_info(checkout, lines, [], manager)
+    checkout_info = fetch_checkout_info(checkout, lines, manager)
     total = calculations.calculate_checkout_total_with_gift_cards(
         manager, checkout_info, lines, address
     )
@@ -611,11 +611,7 @@ def test_handle_authorization_with_adyen_auto_capture(
 def test_handle_authorization_with_adyen_auto_capture_and_inactive_payment(
     refund_mock, notification, adyen_plugin, inactive_payment_adyen_for_checkout
 ):
-    """
-    Ensure that the refund method is called and the new capture transaction is created,
-    when the payment is inactive and there is no success capture transaction for this
-    payment.
-    """
+    """Test that refund is called for inactive payments without an existing capture transaction."""
     # given
     payment = inactive_payment_adyen_for_checkout
     payment_id = graphene.Node.to_global_id("Payment", payment.pk)
@@ -643,10 +639,7 @@ def test_handle_authorization_with_adyen_auto_capture_and_inactive_payment(
 def test_handle_authorization_adyen_auto_capture_inactive_payment_and_captured_txn(
     refund_mock, notification, adyen_plugin, inactive_payment_adyen_for_checkout
 ):
-    """
-    Ensure that the refund method is called and the new capture transaction
-    is not created, when the payment is inactive and already has capture transaction.
-    """
+    """Test that refund is called on inactive payments with existing capture transactions."""
     # given
     payment = inactive_payment_adyen_for_checkout
     psp_reference = "ABC"
@@ -755,7 +748,7 @@ def test_handle_authorization_with_adyen_auto_capture_and_payment_charged(
     assert external_events.count() == 1
 
 
-@pytest.mark.parametrize("payment_is_active", (True, False))
+@pytest.mark.parametrize("payment_is_active", [True, False])
 def test_handle_cancel(
     payment_is_active, notification, adyen_plugin, payment_adyen_for_order
 ):
@@ -865,7 +858,7 @@ def test_handle_capture_for_checkout(
     payment = payment_adyen_for_checkout
     manager = get_plugins_manager()
     lines, _ = fetch_checkout_lines(checkout)
-    checkout_info = fetch_checkout_info(checkout, lines, [], manager)
+    checkout_info = fetch_checkout_info(checkout, lines, manager)
     total = calculations.calculate_checkout_total_with_gift_cards(
         manager, checkout_info, lines, address
     )
@@ -909,11 +902,7 @@ def test_handle_capture_inactive_payment(
     address,
     shipping_method,
 ):
-    """
-    Ensure that the refund method is called and the new capture transaction is created,
-    when the payment is inactive and there is no success capture transaction for this
-    payment.
-    """
+    """Test that refund is called on inactive payments without an existing capture transaction."""
     # given
     payment = inactive_payment_adyen_for_checkout
     payment_id = graphene.Node.to_global_id("Payment", payment.pk)
@@ -946,10 +935,7 @@ def test_handle_capture_inactive_payment_capture_txn_exists(
     address,
     shipping_method,
 ):
-    """
-    Ensure that the refund method is called and the new capture transaction
-    is not created, when the payment is inactive and already has capture transaction.
-    """
+    """Test that refund is called on inactive payments with existing capture transactions."""
     # given
     payment = inactive_payment_adyen_for_checkout
     psp_reference = "ABC"
@@ -992,9 +978,7 @@ def test_handle_capture_for_checkout_order_not_created_checkout_line_variant_del
     address,
     shipping_method,
 ):
-    """
-    Ensure that payment is not captured when one of checkout line variant is deleted.
-    """
+    """Ensure that payment is not captured when a checkout line variant is deleted."""
 
     # given
     checkout = payment_adyen_for_checkout.checkout
@@ -1006,7 +990,7 @@ def test_handle_capture_for_checkout_order_not_created_checkout_line_variant_del
     payment = payment_adyen_for_checkout
     manager = get_plugins_manager()
     lines, _ = fetch_checkout_lines(checkout)
-    checkout_info = fetch_checkout_info(checkout, lines, [], manager)
+    checkout_info = fetch_checkout_info(checkout, lines, manager)
     total = calculations.calculate_checkout_total_with_gift_cards(
         manager, checkout_info, lines, address
     )
@@ -1916,7 +1900,7 @@ def test_handle_order_closed_success_true(
     payment = payment_adyen_for_checkout
     manager = get_plugins_manager()
     lines, _ = fetch_checkout_lines(checkout)
-    checkout_info = fetch_checkout_info(checkout, lines, [], manager)
+    checkout_info = fetch_checkout_info(checkout, lines, manager)
     total = calculations.calculate_checkout_total_with_gift_cards(
         manager, checkout_info, lines, address
     )
@@ -1967,7 +1951,7 @@ def test_handle_order_closed_with_adyen_partial_payments_success_true(
     payment = payment_adyen_for_checkout
     manager = get_plugins_manager()
     lines, _ = fetch_checkout_lines(checkout)
-    checkout_info = fetch_checkout_info(checkout, lines, [], manager)
+    checkout_info = fetch_checkout_info(checkout, lines, manager)
     total = calculations.calculate_checkout_total_with_gift_cards(
         manager, checkout_info, lines, address
     )
@@ -2052,7 +2036,7 @@ def test_handle_order_closed_with_adyen_partial_payments_success_true_without_am
     payment = payment_adyen_for_checkout
     manager = get_plugins_manager()
     lines, _ = fetch_checkout_lines(checkout)
-    checkout_info = fetch_checkout_info(checkout, lines, [], manager)
+    checkout_info = fetch_checkout_info(checkout, lines, manager)
     total = calculations.calculate_checkout_total_with_gift_cards(
         manager, checkout_info, lines, address
     )
@@ -2147,7 +2131,7 @@ def test_order_closed_with_adyen_partial_payments_unable_to_create_order(
     payment = payment_adyen_for_checkout
     manager = get_plugins_manager()
     lines, _ = fetch_checkout_lines(checkout)
-    checkout_info = fetch_checkout_info(checkout, lines, [], manager)
+    checkout_info = fetch_checkout_info(checkout, lines, manager)
     total = calculations.calculate_checkout_total_with_gift_cards(
         manager, checkout_info, lines, address
     )
@@ -2221,7 +2205,7 @@ def test_order_closed_with_not_active_payment(
     payment = payment_adyen_for_checkout
     manager = get_plugins_manager()
     lines, _ = fetch_checkout_lines(checkout)
-    checkout_info = fetch_checkout_info(checkout, lines, [], manager)
+    checkout_info = fetch_checkout_info(checkout, lines, manager)
     total = calculations.calculate_checkout_total_with_gift_cards(
         manager, checkout_info, lines, address
     )

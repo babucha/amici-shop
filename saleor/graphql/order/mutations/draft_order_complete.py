@@ -9,6 +9,8 @@ from ....core.exceptions import InsufficientStock
 from ....core.postgres import FlatConcatSearchVector
 from ....core.taxes import zero_taxed_money
 from ....core.tracing import traced_atomic_transaction
+from ....discount.models import VoucherCode
+from ....discount.utils import add_voucher_usage_by_customer
 from ....order import OrderStatus, models
 from ....order.actions import order_created
 from ....order.calculations import fetch_order_prices_if_expired
@@ -21,6 +23,7 @@ from ....warehouse.management import allocate_preorders, allocate_stocks
 from ....warehouse.reservations import is_reservation_enabled
 from ...app.dataloaders import get_app_promise
 from ...core import ResolveInfo
+from ...core.doc_category import DOC_CATEGORY_ORDERS
 from ...core.mutations import BaseMutation
 from ...core.types import OrderError
 from ...plugins.dataloaders import get_plugin_manager_promise
@@ -42,6 +45,7 @@ class DraftOrderComplete(BaseMutation):
 
     class Meta:
         description = "Completes creating an order."
+        doc_category = DOC_CATEGORY_ORDERS
         permissions = (OrderPermissions.MANAGE_ORDERS,)
         error_type_class = OrderError
         error_type_field = "order_errors"
@@ -69,6 +73,18 @@ class DraftOrderComplete(BaseMutation):
         return order
 
     @classmethod
+    def setup_voucher_customer(cls, order, channel):
+        if (
+            order.voucher
+            and order.voucher_code
+            and order.voucher.apply_once_per_customer
+            and channel.include_draft_order_in_voucher_usage
+        ):
+            code = VoucherCode.objects.filter(code=order.voucher_code).first()
+            if code:
+                add_voucher_usage_by_customer(code, order.get_customer_email())
+
+    @classmethod
     def perform_mutation(  # type: ignore[override]
         cls, _root, info: ResolveInfo, /, *, id: str
     ):
@@ -82,6 +98,7 @@ class DraftOrderComplete(BaseMutation):
             only_type=Order,
             qs=models.Order.objects.prefetch_related("lines__variant"),
         )
+        cls.check_channel_permissions(info, [order.channel_id])
         order, _ = fetch_order_prices_if_expired(order, manager)
         cls.validate_order(order)
 
@@ -105,6 +122,7 @@ class DraftOrderComplete(BaseMutation):
             order.save()
 
             channel = order.channel
+            cls.setup_voucher_customer(order, channel)
             order_lines_info = []
             for line in order.lines.all():
                 if not line.variant:

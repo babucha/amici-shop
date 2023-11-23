@@ -13,6 +13,7 @@ from ....webhook.validators import (
     custom_headers_validator,
 )
 from ...app.dataloaders import get_app_promise
+from ...app.utils import validate_app_is_not_removed
 from ...core import ResolveInfo
 from ...core.descriptions import (
     ADDED_IN_32,
@@ -20,16 +21,18 @@ from ...core.descriptions import (
     DEPRECATED_IN_3X_INPUT,
     PREVIEW_FEATURE,
 )
+from ...core.doc_category import DOC_CATEGORY_WEBHOOKS
 from ...core.fields import JSONString
 from ...core.mutations import ModelMutation
-from ...core.types import NonNullList, WebhookError
+from ...core.types import BaseInputObjectType, NonNullList, WebhookError
 from ...core.utils import raise_validation_error
 from .. import enums
+from ..mixins import NotifyUserEventValidationMixin
 from ..subscription_query import SubscriptionQuery
 from ..types import Webhook
 
 
-class WebhookCreateInput(graphene.InputObjectType):
+class WebhookCreateInput(BaseInputObjectType):
     name = graphene.String(description="The name of the webhook.", required=False)
     target_url = graphene.String(description="The url to receive the payload.")
     events = NonNullList(
@@ -62,7 +65,7 @@ class WebhookCreateInput(graphene.InputObjectType):
     )
     query = graphene.String(
         description="Subscription query used to define a webhook payload."
-        f"{ADDED_IN_32}{PREVIEW_FEATURE}",
+        + ADDED_IN_32,
         required=False,
     )
     custom_headers = JSONString(
@@ -70,12 +73,16 @@ class WebhookCreateInput(graphene.InputObjectType):
         f"There is a limitation of {HEADERS_NUMBER_LIMIT} headers per webhook "
         f"and {HEADERS_LENGTH_LIMIT} characters per header."
         f'Only "X-*" and "Authorization*" keys are allowed.'
-        f"{ADDED_IN_312}{PREVIEW_FEATURE}",
+        + ADDED_IN_312
+        + PREVIEW_FEATURE,
         required=False,
     )
 
+    class Meta:
+        doc_category = DOC_CATEGORY_WEBHOOKS
 
-class WebhookCreate(ModelMutation):
+
+class WebhookCreate(ModelMutation, NotifyUserEventValidationMixin):
     class Arguments:
         input = WebhookCreateInput(
             description="Fields required to create a webhook.", required=True
@@ -102,7 +109,8 @@ class WebhookCreate(ModelMutation):
         # context has assigned app instance
         if not instance.app_id and not app:
             raise ValidationError(
-                "Missing token or app", code=WebhookErrorCode.INVALID.value
+                "Missing app id. Fill in the app field or run the mutation by the app",
+                code=WebhookErrorCode.INVALID.value,
             )
 
         if instance.app_id:
@@ -111,6 +119,7 @@ class WebhookCreate(ModelMutation):
             app = instance.app
             cleaned_data.pop("app", None)
 
+        validate_app_is_not_removed(app, data.get("input", {}).get("app"), "app")
         if not app or not app.is_active:
             raise ValidationError(
                 "App doesn't exist or is disabled",
@@ -142,8 +151,10 @@ class WebhookCreate(ModelMutation):
 
         return cleaned_data
 
-    @staticmethod
-    def _clean_webhook_events(data, subscription_query: Optional[SubscriptionQuery]):
+    @classmethod
+    def _clean_webhook_events(
+        cls, data, subscription_query: Optional[SubscriptionQuery]
+    ):
         # if `events` field is not empty, use this field. Otherwise get event types
         # from `async_events` and `sync_events`. If the fields are also empty,
         # parse events from `query`.
@@ -154,6 +165,7 @@ class WebhookCreate(ModelMutation):
 
         if not events and subscription_query:
             events = subscription_query.events
+        cls.validate_events(events)
 
         data["events"] = events
         return data

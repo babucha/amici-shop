@@ -17,7 +17,7 @@ from .....payment import ChargeStatus
 from ....tests.utils import get_graphql_content
 
 
-@pytest.fixture()
+@pytest.fixture
 def orders_for_pagination(db, channel_USD):
     orders = Order.objects.bulk_create(
         [
@@ -45,7 +45,7 @@ def orders_for_pagination(db, channel_USD):
     return orders
 
 
-@pytest.fixture()
+@pytest.fixture
 def draft_orders_for_pagination(db, channel_USD):
     orders = Order.objects.bulk_create(
         [
@@ -137,7 +137,7 @@ QUERY_DRAFT_ORDERS_WITH_PAGINATION = """
 
 
 @pytest.mark.parametrize(
-    "orders_filter, orders_order, expected_total_count",
+    ("orders_filter", "orders_order", "expected_total_count"),
     [
         (
             {
@@ -160,7 +160,7 @@ def test_order_query_pagination_with_filter_created(
     orders_order,
     expected_total_count,
     staff_api_client,
-    permission_manage_orders,
+    permission_group_manage_orders,
     orders_for_pagination,
     channel_USD,
 ):
@@ -168,7 +168,7 @@ def test_order_query_pagination_with_filter_created(
         Order.objects.create(channel=channel_USD)
     page_size = 2
     variables = {"first": page_size, "after": None, "filter": orders_filter}
-    staff_api_client.user.user_permissions.add(permission_manage_orders)
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
     response = staff_api_client.post_graphql(QUERY_ORDERS_WITH_PAGINATION, variables)
     content = get_graphql_content(response)
 
@@ -182,7 +182,7 @@ def test_order_query_pagination_with_filter_created(
 
 
 @pytest.mark.parametrize(
-    "orders_filter, expected_total_count, payment_status, orders_order",
+    ("orders_filter", "expected_total_count", "payment_status", "orders_order"),
     [
         ({"paymentStatus": "FULLY_CHARGED"}, 1, ChargeStatus.FULLY_CHARGED, [98.4]),
         ({"paymentStatus": "NOT_CHARGED"}, 4, ChargeStatus.NOT_CHARGED, [3.0, 2.0]),
@@ -210,9 +210,10 @@ def test_order_query_pagination_with_filter_payment_status(
     orders_order,
     staff_api_client,
     payment_dummy,
-    permission_manage_orders,
+    permission_group_manage_orders,
     orders_for_pagination,
 ):
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
     payment_dummy.charge_status = payment_status
     payment_dummy.save()
 
@@ -224,7 +225,6 @@ def test_order_query_pagination_with_filter_payment_status(
 
     page_size = 2
     variables = {"first": page_size, "after": None, "filter": orders_filter}
-    staff_api_client.user.user_permissions.add(permission_manage_orders)
     response = staff_api_client.post_graphql(QUERY_ORDERS_WITH_PAGINATION, variables)
     content = get_graphql_content(response)
 
@@ -237,7 +237,7 @@ def test_order_query_pagination_with_filter_payment_status(
 
 
 @pytest.mark.parametrize(
-    "orders_filter, expected_total_count, status, orders_order",
+    ("orders_filter", "expected_total_count", "status", "orders_order"),
     [
         ({"status": "UNFULFILLED"}, 4, OrderStatus.UNFULFILLED, [3.0, 2.0]),
         ({"status": "PARTIALLY_FULFILLED"}, 1, OrderStatus.PARTIALLY_FULFILLED, [0.0]),
@@ -251,7 +251,7 @@ def test_order_query_pagination_with_filter_status(
     status,
     orders_order,
     staff_api_client,
-    permission_manage_orders,
+    permission_group_manage_orders,
     order,
     orders_for_pagination,
 ):
@@ -260,7 +260,8 @@ def test_order_query_pagination_with_filter_status(
 
     page_size = 2
     variables = {"first": page_size, "after": None, "filter": orders_filter}
-    staff_api_client.user.user_permissions.add(permission_manage_orders)
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
+
     response = staff_api_client.post_graphql(QUERY_ORDERS_WITH_PAGINATION, variables)
     content = get_graphql_content(response)
 
@@ -273,7 +274,7 @@ def test_order_query_pagination_with_filter_status(
 
 
 @pytest.mark.parametrize(
-    "orders_filter, user_field, user_value",
+    ("orders_filter", "user_field", "user_value"),
     [
         ({"customer": "admin"}, "email", "admin@example.com"),
         ({"customer": "John"}, "first_name", "johnny"),
@@ -285,7 +286,7 @@ def test_order_query_pagination_with_filter_customer_fields(
     user_field,
     user_value,
     staff_api_client,
-    permission_manage_orders,
+    permission_group_manage_orders,
     customer_user,
     orders_for_pagination,
     channel_USD,
@@ -298,7 +299,8 @@ def test_order_query_pagination_with_filter_customer_fields(
 
     page_size = 2
     variables = {"first": page_size, "after": None, "filter": orders_filter}
-    staff_api_client.user.user_permissions.add(permission_manage_orders)
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
+
     response = staff_api_client.post_graphql(QUERY_ORDERS_WITH_PAGINATION, variables)
     content = get_graphql_content(response)
     orders = content["data"]["orders"]["edges"]
@@ -309,7 +311,7 @@ def test_order_query_pagination_with_filter_customer_fields(
 
 
 @pytest.mark.parametrize(
-    "orders_filter, user_field, user_value",
+    ("orders_filter", "user_field", "user_value"),
     [
         ({"customer": "admin"}, "email", "admin@example.com"),
         ({"customer": "John"}, "first_name", "johnny"),
@@ -321,7 +323,7 @@ def test_draft_order_query_pagination_with_filter_customer_fields(
     user_field,
     user_value,
     staff_api_client,
-    permission_manage_orders,
+    permission_group_manage_orders,
     customer_user,
     draft_orders_for_pagination,
     channel_USD,
@@ -338,7 +340,8 @@ def test_draft_order_query_pagination_with_filter_customer_fields(
 
     page_size = 2
     variables = {"first": page_size, "after": None, "filter": orders_filter}
-    staff_api_client.user.user_permissions.add(permission_manage_orders)
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
+
     response = staff_api_client.post_graphql(
         QUERY_DRAFT_ORDERS_WITH_PAGINATION, variables
     )
@@ -351,7 +354,7 @@ def test_draft_order_query_pagination_with_filter_customer_fields(
 
 
 @pytest.mark.parametrize(
-    "orders_filter, expected_total_count, orders_order",
+    ("orders_filter", "expected_total_count", "orders_order"),
     [
         (
             {
@@ -374,7 +377,7 @@ def test_draft_order_query_pagination_with_filter_created(
     expected_total_count,
     orders_order,
     staff_api_client,
-    permission_manage_orders,
+    permission_group_manage_orders,
     draft_orders_for_pagination,
     channel_USD,
 ):
@@ -386,7 +389,8 @@ def test_draft_order_query_pagination_with_filter_created(
         )
     page_size = 2
     variables = {"first": page_size, "after": None, "filter": orders_filter}
-    staff_api_client.user.user_permissions.add(permission_manage_orders)
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
+
     response = staff_api_client.post_graphql(
         QUERY_DRAFT_ORDERS_WITH_PAGINATION, variables
     )
@@ -402,7 +406,7 @@ def test_draft_order_query_pagination_with_filter_created(
 
 
 @pytest.mark.parametrize(
-    "orders_filter, expected_total_count",
+    ("orders_filter", "expected_total_count"),
     [
         ({"search": "discount name"}, 2),
         ({"search": "Some other"}, 1),
@@ -416,7 +420,7 @@ def test_orders_query_pagination_with_filter_search(
     orders_filter,
     expected_total_count,
     staff_api_client,
-    permission_manage_orders,
+    permission_group_manage_orders,
     customer_user,
     orders_for_pagination,
     channel_USD,
@@ -467,7 +471,8 @@ def test_orders_query_pagination_with_filter_search(
     orders_seen = 0
     while True:
         variables = {"first": 1, "after": after, "filter": orders_filter}
-        staff_api_client.user.user_permissions.add(permission_manage_orders)
+        permission_group_manage_orders.user_set.add(staff_api_client.user)
+
         response = staff_api_client.post_graphql(
             QUERY_ORDERS_WITH_PAGINATION, variables
         )
@@ -483,7 +488,7 @@ def test_orders_query_pagination_with_filter_search(
 
 
 @pytest.mark.parametrize(
-    "draft_orders_filter, expected_total_count",
+    ("draft_orders_filter", "expected_total_count"),
     [
         ({"search": "discount name"}, 2),
         ({"search": "Some other"}, 1),
@@ -497,7 +502,7 @@ def test_draft_orders_query_pagination_with_filter_search(
     draft_orders_filter,
     expected_total_count,
     staff_api_client,
-    permission_manage_orders,
+    permission_group_manage_orders,
     customer_user,
     draft_orders_for_pagination,
     channel_USD,
@@ -552,7 +557,8 @@ def test_draft_orders_query_pagination_with_filter_search(
 
     page_size = 2
     variables = {"first": page_size, "after": None, "filter": draft_orders_filter}
-    staff_api_client.user.user_permissions.add(permission_manage_orders)
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
+
     response = staff_api_client.post_graphql(
         QUERY_DRAFT_ORDERS_WITH_PAGINATION, variables
     )
@@ -564,12 +570,13 @@ def test_draft_orders_query_pagination_with_filter_search(
 
 
 def test_orders_query_pagination_with_filter_search_by_number(
-    order_with_search_vector_value, staff_api_client, permission_manage_orders
+    order_generator, staff_api_client, permission_group_manage_orders
 ):
-    order = order_with_search_vector_value
+    order = order_generator(search_vector_class=FlatConcatSearchVector)
     page_size = 2
     variables = {"first": page_size, "after": None, "filter": {"search": order.number}}
-    staff_api_client.user.user_permissions.add(permission_manage_orders)
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
+
     response = staff_api_client.post_graphql(QUERY_ORDERS_WITH_PAGINATION, variables)
     content = get_graphql_content(response)
     assert content["data"]["orders"]["totalCount"] == 1
@@ -578,7 +585,7 @@ def test_orders_query_pagination_with_filter_search_by_number(
 def test_draft_orders_query_pagination_with_filter_search_by_number(
     draft_order,
     staff_api_client,
-    permission_manage_orders,
+    permission_group_manage_orders,
 ):
     update_order_search_vector(draft_order)
     page_size = 2
@@ -587,7 +594,8 @@ def test_draft_orders_query_pagination_with_filter_search_by_number(
         "after": None,
         "filter": {"search": draft_order.number},
     }
-    staff_api_client.user.user_permissions.add(permission_manage_orders)
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
+
     response = staff_api_client.post_graphql(
         QUERY_DRAFT_ORDERS_WITH_PAGINATION, variables
     )
@@ -596,7 +604,7 @@ def test_draft_orders_query_pagination_with_filter_search_by_number(
 
 
 @pytest.mark.parametrize(
-    "order_sort, result_order",
+    ("order_sort", "result_order"),
     [
         ({"field": "NUMBER", "direction": "ASC"}, [0, 1]),
         ({"field": "NUMBER", "direction": "DESC"}, [2, 1]),
@@ -616,7 +624,7 @@ def test_query_orders_pagination_with_sort(
     order_sort,
     result_order,
     staff_api_client,
-    permission_manage_orders,
+    permission_group_manage_orders,
     address,
     channel_USD,
 ):
@@ -660,7 +668,8 @@ def test_query_orders_pagination_with_sort(
 
     page_size = 2
     variables = {"first": page_size, "after": None, "sortBy": order_sort}
-    staff_api_client.user.user_permissions.add(permission_manage_orders)
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
+
     response = staff_api_client.post_graphql(QUERY_ORDERS_WITH_PAGINATION, variables)
     content = get_graphql_content(response)
     orders = content["data"]["orders"]["edges"]

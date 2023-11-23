@@ -1,5 +1,3 @@
-from typing import List
-
 import graphene
 
 from ...core import models as core_models
@@ -12,6 +10,7 @@ from ..core.connection import (
     create_connection_slice,
     filter_connection_queryset,
 )
+from ..core.context import get_database_connection_name
 from ..core.descriptions import ADDED_IN_312, DEPRECATED_IN_3X_FIELD, PREVIEW_FEATURE
 from ..core.fields import FilterConnectionField, JSONString
 from ..core.types import ModelObjectType, NonNullList
@@ -52,9 +51,9 @@ class WebhookEventAsync(ModelObjectType[models.WebhookEvent]):
 
     @staticmethod
     def resolve_name(root: models.WebhookEvent, _info):
-        return (
-            WebhookEventAsyncType.DISPLAY_LABELS.get(root.event_type) or root.event_type
-        )
+        if root.event_type in WebhookEventAsyncType.EVENT_MAP:
+            return WebhookEventAsyncType.EVENT_MAP[root.event_type]["name"]
+        return root.event_type
 
 
 class WebhookEventSync(ModelObjectType[models.WebhookEvent]):
@@ -69,13 +68,15 @@ class WebhookEventSync(ModelObjectType[models.WebhookEvent]):
 
     @staticmethod
     def resolve_name(root: models.WebhookEvent, _info):
-        return (
-            WebhookEventSyncType.DISPLAY_LABELS.get(root.event_type) or root.event_type
-        )
+        if root.event_type in WebhookEventSyncType.EVENT_MAP:
+            return WebhookEventSyncType.EVENT_MAP[root.event_type]["name"]
+        return root.event_type
 
 
 class EventDeliveryAttempt(ModelObjectType[core_models.EventDeliveryAttempt]):
-    id = graphene.GlobalID(required=True)
+    id = graphene.GlobalID(
+        required=True, description="The ID of Event Delivery Attempt."
+    )
     created_at = graphene.DateTime(
         description="Event delivery creation date and time.", required=True
     )
@@ -107,8 +108,10 @@ class EventDeliveryAttemptCountableConnection(CountableConnection):
 
 
 class EventDelivery(ModelObjectType[core_models.EventDelivery]):
-    id = graphene.GlobalID(required=True)
-    created_at = graphene.DateTime(required=True)
+    id = graphene.GlobalID(required=True, description="The ID of an event delivery.")
+    created_at = graphene.DateTime(
+        required=True, description="Creation time of an event delivery."
+    )
     status = EventDeliveryStatusEnum(
         description="Event delivery status.", required=True
     )
@@ -127,7 +130,9 @@ class EventDelivery(ModelObjectType[core_models.EventDelivery]):
 
     @staticmethod
     def resolve_attempts(root: core_models.EventDelivery, info: ResolveInfo, **kwargs):
-        qs = core_models.EventDeliveryAttempt.objects.filter(delivery=root)
+        qs = core_models.EventDeliveryAttempt.objects.using(
+            get_database_connection_name(info.context)
+        ).filter(delivery=root)
         qs = filter_connection_queryset(qs, kwargs)
         return create_connection_slice(
             qs, info, kwargs, EventDeliveryAttemptCountableConnection
@@ -146,8 +151,8 @@ class EventDeliveryCountableConnection(CountableConnection):
 
 
 class Webhook(ModelObjectType[models.Webhook]):
-    id = graphene.GlobalID(required=True)
-    name = graphene.String(required=True)
+    id = graphene.GlobalID(required=True, description="The ID of webhook.")
+    name = graphene.String(required=False, description="The name of webhook.")
     events = NonNullList(
         WebhookEvent,
         description="List of webhook events.",
@@ -166,7 +171,11 @@ class Webhook(ModelObjectType[models.Webhook]):
         description="List of asynchronous webhook events.",
         required=True,
     )
-    app = graphene.Field("saleor.graphql.app.types.App", required=True)
+    app = graphene.Field(
+        "saleor.graphql.app.types.App",
+        required=True,
+        description="The app associated with Webhook.",
+    )
     event_deliveries = FilterConnectionField(
         EventDeliveryCountableConnection,
         sort_by=EventDeliverySortingInput(description="Event delivery sorter."),
@@ -200,7 +209,7 @@ class Webhook(ModelObjectType[models.Webhook]):
 
     @staticmethod
     def resolve_async_events(root: models.Webhook, info: ResolveInfo):
-        def _filter_by_async_type(webhook_events: List[WebhookEvent]):
+        def _filter_by_async_type(webhook_events: list[WebhookEvent]):
             return filter(
                 lambda webhook_event: webhook_event.event_type
                 in WebhookEventAsyncType.ALL,
@@ -215,7 +224,7 @@ class Webhook(ModelObjectType[models.Webhook]):
 
     @staticmethod
     def resolve_sync_events(root: models.Webhook, info: ResolveInfo):
-        def _filter_by_sync_type(webhook_events: List[WebhookEvent]):
+        def _filter_by_sync_type(webhook_events: list[WebhookEvent]):
             return filter(
                 lambda webhook_event: webhook_event.event_type
                 in WebhookEventSyncType.ALL,
@@ -234,7 +243,9 @@ class Webhook(ModelObjectType[models.Webhook]):
 
     @staticmethod
     def resolve_event_deliveries(root: models.Webhook, info: ResolveInfo, **kwargs):
-        qs = core_models.EventDelivery.objects.filter(webhook_id=root.pk)
+        qs = core_models.EventDelivery.objects.using(
+            get_database_connection_name(info.context)
+        ).filter(webhook_id=root.pk)
         qs = filter_connection_queryset(qs, kwargs)
         return create_connection_slice(
             qs, info, kwargs, EventDeliveryCountableConnection

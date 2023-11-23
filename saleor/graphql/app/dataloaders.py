@@ -3,19 +3,25 @@ from functools import partial, wraps
 from typing import Optional
 
 from django.contrib.auth.hashers import check_password
+from django.utils.functional import LazyObject
 from promise import Promise
 
 from ...app.models import App, AppExtension, AppToken
 from ...core.auth import get_token_from_request
+from ...core.utils.lazyobjects import unwrap_lazy
 from ..core import SaleorContext
-from ..core.dataloaders import DataLoader
+from ..core.dataloaders import BaseThumbnailBySizeAndFormatLoader, DataLoader
 
 
 class AppByIdLoader(DataLoader):
     context_key = "app_by_id"
 
     def batch_load(self, keys):
-        apps = App.objects.using(self.database_connection_name).in_bulk(keys)
+        apps = (
+            App.objects.using(self.database_connection_name)
+            .filter(removed_at__isnull=True)
+            .in_bulk(keys)
+        )
         return [apps.get(key) for key in keys]
 
 
@@ -44,6 +50,32 @@ class AppExtensionByAppIdLoader(DataLoader):
         return [extensions_map.get(app_id, []) for app_id in keys]
 
 
+class AppsByAppIdentifierLoader(DataLoader):
+    context_key = "apps_by_app_identifier"
+
+    def batch_load(self, keys):
+        apps = App.objects.using(self.database_connection_name).filter(
+            identifier__in=keys, removed_at__isnull=True
+        )
+        apps_map = defaultdict(list)
+        for app in apps:
+            apps_map[app.identifier].append(app)
+        return [apps_map.get(app_identifier, []) for app_identifier in keys]
+
+
+class AppTokensByAppIdLoader(DataLoader):
+    context_key = "app_tokens_by_app_id"
+
+    def batch_load(self, keys):
+        tokens = AppToken.objects.using(self.database_connection_name).filter(
+            app_id__in=keys, app__removed_at__isnull=True
+        )
+        tokens_by_app_map = defaultdict(list)
+        for token in tokens:
+            tokens_by_app_map[token.app_id].append(token)
+        return [tokens_by_app_map.get(app_id, []) for app_id in keys]
+
+
 class AppByTokenLoader(DataLoader):
     context_key = "app_by_token"
 
@@ -52,26 +84,38 @@ class AppByTokenLoader(DataLoader):
         for raw_token in keys:
             last_4s_to_raw_token_map[raw_token[-4:]].append(raw_token)
 
-        # The app should always be taken from the default database.
-        # The app is retrieved from the database before the mutation code is reached,
-        # in case the replica database is set the app from the replica will be returned.
-        # In such case, when in the mutation there is another ask for an app,
-        # the cached instance from the replica is returned. Then the error is raised
-        # when any object is saved with a reference to this app.
-        # Because of that loaders that are used in context shouldn't use
-        # the replica database.
-        tokens = AppToken.objects.filter(
-            token_last_4__in=last_4s_to_raw_token_map.keys()
-        ).values_list("auth_token", "token_last_4", "app_id")
+        tokens = (
+            AppToken.objects.using(self.database_connection_name)
+            .filter(token_last_4__in=last_4s_to_raw_token_map.keys())
+            .values_list("auth_token", "token_last_4", "app_id")
+        )
         authed_apps = {}
         for auth_token, token_last_4, app_id in tokens:
             for raw_token in last_4s_to_raw_token_map[token_last_4]:
                 if check_password(raw_token, auth_token):
                     authed_apps[raw_token] = app_id
 
-        apps = App.objects.filter(id__in=authed_apps.values(), is_active=True).in_bulk()
+        apps = (
+            App.objects.using(self.database_connection_name)
+            .filter(
+                id__in=authed_apps.values(), is_active=True, removed_at__isnull=True
+            )
+            .in_bulk()
+        )
 
         return [apps.get(authed_apps.get(key)) for key in keys]
+
+
+class ThumbnailByAppIdSizeAndFormatLoader(BaseThumbnailBySizeAndFormatLoader):
+    context_key = "thumbnail_by_app_size_and_format"
+    model_name = "app"
+
+
+class ThumbnailByAppInstallationIdSizeAndFormatLoader(
+    BaseThumbnailBySizeAndFormatLoader
+):
+    context_key = "thumbnail_by_app_installation_size_and_format"
+    model_name = "app_installation"
 
 
 def promise_app(context: SaleorContext) -> Promise[Optional[App]]:
@@ -83,7 +127,10 @@ def promise_app(context: SaleorContext) -> Promise[Optional[App]]:
 
 def get_app_promise(context: SaleorContext) -> Promise[Optional[App]]:
     if hasattr(context, "app"):
-        return Promise.resolve(context.app)
+        app = context.app
+        if isinstance(app, LazyObject):
+            app = unwrap_lazy(app)
+        return Promise.resolve(app)
 
     return promise_app(context)
 

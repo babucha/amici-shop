@@ -1,18 +1,27 @@
-from typing import List, Optional
-
 import graphene
-from graphql import GraphQLError
 
 from ...permission.enums import ProductPermissions
 from ...permission.utils import has_one_of_permissions
 from ...product.models import ALL_PRODUCTS_PERMISSIONS
-from ..channel import ChannelContext
+from ...product.search import search_products
+from ..channel import ChannelContext, ChannelQsContext
 from ..channel.utils import get_default_channel_slug_or_graphql_error
 from ..core import ResolveInfo
 from ..core.connection import create_connection_slice, filter_connection_queryset
-from ..core.descriptions import ADDED_IN_310
+from ..core.descriptions import (
+    ADDED_IN_310,
+    ADDED_IN_314,
+    DEPRECATED_IN_3X_FIELD,
+    PREVIEW_FEATURE,
+)
+from ..core.doc_category import DOC_CATEGORY_PRODUCTS
 from ..core.enums import ReportingPeriod
-from ..core.fields import ConnectionField, FilterConnectionField, PermissionsField
+from ..core.fields import (
+    BaseField,
+    ConnectionField,
+    FilterConnectionField,
+    PermissionsField,
+)
 from ..core.tracing import traced_resolver
 from ..core.types import NonNullList
 from ..core.utils import from_global_id_or_error
@@ -20,13 +29,16 @@ from ..core.validators import validate_one_of_args_is_in_query
 from ..translations.mutations import (
     CategoryTranslate,
     CollectionTranslate,
+    ProductBulkTranslate,
     ProductTranslate,
+    ProductVariantBulkTranslate,
     ProductVariantTranslate,
 )
 from ..utils import get_user_or_app_from_context
 from .bulk_mutations import (
     CategoryBulkDelete,
     CollectionBulkDelete,
+    ProductBulkCreate,
     ProductBulkDelete,
     ProductMediaBulkDelete,
     ProductTypeBulkDelete,
@@ -37,12 +49,17 @@ from .bulk_mutations import (
     ProductVariantStocksDelete,
     ProductVariantStocksUpdate,
 )
+from .dataloaders.products import CategoryByIdLoader, CategoryBySlugLoader
 from .filters import (
     CategoryFilterInput,
+    CategoryWhereInput,
     CollectionFilterInput,
+    CollectionWhereInput,
     ProductFilterInput,
     ProductTypeFilterInput,
     ProductVariantFilterInput,
+    ProductVariantWhereInput,
+    ProductWhereInput,
 )
 from .mutations import (
     CategoryCreate,
@@ -94,8 +111,6 @@ from .mutations.digital_contents import (
 )
 from .resolvers import (
     resolve_categories,
-    resolve_category_by_id,
-    resolve_category_by_slug,
     resolve_collection_by_id,
     resolve_collection_by_slug,
     resolve_collections,
@@ -113,7 +128,6 @@ from .sorters import (
     CategorySortingInput,
     CollectionSortingInput,
     ProductOrder,
-    ProductOrderField,
     ProductTypeSortingInput,
     ProductVariantSortingInput,
 )
@@ -131,14 +145,7 @@ from .types import (
     ProductVariant,
     ProductVariantCountableConnection,
 )
-
-
-def search_string_in_kwargs(kwargs: dict) -> bool:
-    return bool(kwargs.get("filter", {}).get("search", "").strip())
-
-
-def sort_field_from_kwargs(kwargs: dict) -> Optional[List[str]]:
-    return kwargs.get("sort_by", {}).get("field") or None
+from .utils import check_for_sorting_by_rank
 
 
 class ProductQueries(graphene.ObjectType):
@@ -151,6 +158,7 @@ class ProductQueries(graphene.ObjectType):
         permissions=[
             ProductPermissions.MANAGE_PRODUCTS,
         ],
+        doc_category=DOC_CATEGORY_PRODUCTS,
     )
     digital_contents = ConnectionField(
         DigitalContentCountableConnection,
@@ -158,24 +166,30 @@ class ProductQueries(graphene.ObjectType):
         permissions=[
             ProductPermissions.MANAGE_PRODUCTS,
         ],
+        doc_category=DOC_CATEGORY_PRODUCTS,
     )
     categories = FilterConnectionField(
         CategoryCountableConnection,
         filter=CategoryFilterInput(description="Filtering options for categories."),
+        where=CategoryWhereInput(
+            description="Where filtering options." + ADDED_IN_314 + PREVIEW_FEATURE
+        ),
         sort_by=CategorySortingInput(description="Sort categories."),
         level=graphene.Argument(
             graphene.Int,
             description="Filter categories by the nesting level in the category tree.",
         ),
         description="List of the shop's categories.",
+        doc_category=DOC_CATEGORY_PRODUCTS,
     )
-    category = graphene.Field(
+    category = BaseField(
         Category,
         id=graphene.Argument(graphene.ID, description="ID of the category."),
         slug=graphene.Argument(graphene.String, description="Slug of the category"),
         description="Look up a category by ID or slug.",
+        doc_category=DOC_CATEGORY_PRODUCTS,
     )
-    collection = graphene.Field(
+    collection = BaseField(
         Collection,
         id=graphene.Argument(
             graphene.ID,
@@ -190,10 +204,14 @@ class ProductQueries(graphene.ObjectType):
             "include the unpublished items: "
             f"{', '.join([p.name for p in ALL_PRODUCTS_PERMISSIONS])}."
         ),
+        doc_category=DOC_CATEGORY_PRODUCTS,
     )
     collections = FilterConnectionField(
         CollectionCountableConnection,
         filter=CollectionFilterInput(description="Filtering options for collections."),
+        where=CollectionWhereInput(
+            description="Where filtering options." + ADDED_IN_314 + PREVIEW_FEATURE
+        ),
         sort_by=CollectionSortingInput(description="Sort collections."),
         description=(
             "List of the shop's collections. Requires one of the following permissions "
@@ -203,8 +221,9 @@ class ProductQueries(graphene.ObjectType):
         channel=graphene.String(
             description="Slug of a channel for which the data should be returned."
         ),
+        doc_category=DOC_CATEGORY_PRODUCTS,
     )
-    product = graphene.Field(
+    product = BaseField(
         Product,
         id=graphene.Argument(
             graphene.ID,
@@ -222,11 +241,16 @@ class ProductQueries(graphene.ObjectType):
             "include the unpublished items: "
             f"{', '.join([p.name for p in ALL_PRODUCTS_PERMISSIONS])}."
         ),
+        doc_category=DOC_CATEGORY_PRODUCTS,
     )
     products = FilterConnectionField(
         ProductCountableConnection,
         filter=ProductFilterInput(description="Filtering options for products."),
+        where=ProductWhereInput(
+            description="Where filtering options." + ADDED_IN_314 + PREVIEW_FEATURE
+        ),
         sort_by=ProductOrder(description="Sort products."),
+        search=graphene.String(description="Search products." + ADDED_IN_314),
         channel=graphene.String(
             description="Slug of a channel for which the data should be returned."
         ),
@@ -235,13 +259,15 @@ class ProductQueries(graphene.ObjectType):
             "include the unpublished items: "
             f"{', '.join([p.name for p in ALL_PRODUCTS_PERMISSIONS])}."
         ),
+        doc_category=DOC_CATEGORY_PRODUCTS,
     )
-    product_type = graphene.Field(
+    product_type = BaseField(
         ProductType,
         id=graphene.Argument(
             graphene.ID, description="ID of the product type.", required=True
         ),
         description="Look up a product type by ID.",
+        doc_category=DOC_CATEGORY_PRODUCTS,
     )
     product_types = FilterConnectionField(
         ProductTypeCountableConnection,
@@ -250,15 +276,16 @@ class ProductQueries(graphene.ObjectType):
         ),
         sort_by=ProductTypeSortingInput(description="Sort product types."),
         description="List of the shop's product types.",
+        doc_category=DOC_CATEGORY_PRODUCTS,
     )
-    product_variant = graphene.Field(
+    product_variant = BaseField(
         ProductVariant,
         id=graphene.Argument(
             graphene.ID,
             description="ID of the product variant.",
         ),
         sku=graphene.Argument(
-            graphene.String, description="Sku of the product variant."
+            graphene.String, description="SKU of the product variant."
         ),
         external_reference=graphene.Argument(
             graphene.String, description=f"External ID of the product. {ADDED_IN_310}"
@@ -271,6 +298,7 @@ class ProductQueries(graphene.ObjectType):
             "permissions to include the unpublished items: "
             f"{', '.join([p.name for p in ALL_PRODUCTS_PERMISSIONS])}."
         ),
+        doc_category=DOC_CATEGORY_PRODUCTS,
     )
     product_variants = FilterConnectionField(
         ProductVariantCountableConnection,
@@ -283,12 +311,16 @@ class ProductQueries(graphene.ObjectType):
         filter=ProductVariantFilterInput(
             description="Filtering options for product variant."
         ),
+        where=ProductVariantWhereInput(
+            description="Where filtering options." + ADDED_IN_314 + PREVIEW_FEATURE
+        ),
         sort_by=ProductVariantSortingInput(description="Sort products variants."),
         description=(
             "List of product variants. Requires one of the following permissions to "
             "include the unpublished items: "
             f"{', '.join([p.name for p in ALL_PRODUCTS_PERMISSIONS])}."
         ),
+        doc_category=DOC_CATEGORY_PRODUCTS,
     )
     report_product_sales = ConnectionField(
         ProductVariantCountableConnection,
@@ -303,6 +335,8 @@ class ProductQueries(graphene.ObjectType):
         permissions=[
             ProductPermissions.MANAGE_PRODUCTS,
         ],
+        doc_category=DOC_CATEGORY_PRODUCTS,
+        deprecation_reason=DEPRECATED_IN_3X_FIELD,
     )
 
     @staticmethod
@@ -312,14 +346,16 @@ class ProductQueries(graphene.ObjectType):
         return create_connection_slice(qs, info, kwargs, CategoryCountableConnection)
 
     @staticmethod
-    @traced_resolver
-    def resolve_category(_root, _info: ResolveInfo, *, id=None, slug=None, **kwargs):
+    def resolve_category(_root, info: ResolveInfo, *, id=None, slug=None, **kwargs):
         validate_one_of_args_is_in_query("id", id, "slug", slug)
         if id:
             _, id = from_global_id_or_error(id, Category)
-            return resolve_category_by_id(id)
+            # FIXME: we should raise an error above
+            if id is not None:
+                return CategoryByIdLoader(info.context).load(int(id))
+            return None
         if slug:
-            return resolve_category_by_slug(slug=slug)
+            return CategoryBySlugLoader(info.context).load(slug)
 
     @staticmethod
     @traced_resolver
@@ -361,9 +397,9 @@ class ProductQueries(graphene.ObjectType):
         return create_connection_slice(qs, info, kwargs, CollectionCountableConnection)
 
     @staticmethod
-    def resolve_digital_content(_root, _info: ResolveInfo, *, id):
+    def resolve_digital_content(_root, info: ResolveInfo, *, id):
         _, id = from_global_id_or_error(id, DigitalContent)
-        return resolve_digital_content_by_id(id)
+        return resolve_digital_content_by_id(info, id)
 
     @staticmethod
     def resolve_digital_contents(_root, info: ResolveInfo, **kwargs):
@@ -409,19 +445,8 @@ class ProductQueries(graphene.ObjectType):
     @staticmethod
     @traced_resolver
     def resolve_products(_root, info: ResolveInfo, *, channel=None, **kwargs):
-        if sort_field_from_kwargs(kwargs) == ProductOrderField.RANK:
-            # sort by RANK can be used only with search filter
-            if not search_string_in_kwargs(kwargs):
-                raise GraphQLError(
-                    "Sorting by RANK is available only when using a search filter."
-                )
-        if search_string_in_kwargs(kwargs) and not sort_field_from_kwargs(kwargs):
-            # default to sorting by RANK if search is used
-            # and no explicit sorting is requested
-            product_type = info.schema.get_type("ProductOrder")
-            kwargs["sort_by"] = product_type.create_container(
-                {"direction": "-", "field": ["search_rank", "id"]}
-            )
+        check_for_sorting_by_rank(info, kwargs)
+        search = kwargs.get("search")
 
         requestor = get_user_or_app_from_context(info.context)
         has_required_permissions = has_one_of_permissions(
@@ -430,14 +455,18 @@ class ProductQueries(graphene.ObjectType):
         if channel is None and not has_required_permissions:
             channel = get_default_channel_slug_or_graphql_error()
         qs = resolve_products(info, requestor, channel_slug=channel)
+        if search:
+            qs = ChannelQsContext(
+                qs=search_products(qs.qs, search), channel_slug=channel
+            )
         kwargs["channel"] = channel
         qs = filter_connection_queryset(qs, kwargs)
         return create_connection_slice(qs, info, kwargs, ProductCountableConnection)
 
     @staticmethod
-    def resolve_product_type(_root, _info: ResolveInfo, *, id):
+    def resolve_product_type(_root, info: ResolveInfo, *, id):
         _, id = from_global_id_or_error(id, ProductType)
-        return resolve_product_type_by_id(id)
+        return resolve_product_type_by_id(info, id)
 
     @staticmethod
     def resolve_product_types(_root, info: ResolveInfo, **kwargs):
@@ -507,7 +536,7 @@ class ProductQueries(graphene.ObjectType):
     def resolve_report_product_sales(
         _root, info: ResolveInfo, *, period, channel, **kwargs
     ):
-        qs = resolve_report_product_sales(period, channel_slug=channel)
+        qs = resolve_report_product_sales(info, period, channel_slug=channel)
         kwargs["channel"] = qs.channel_slug
         return create_connection_slice(
             qs, info, kwargs, ProductVariantCountableConnection
@@ -537,8 +566,10 @@ class ProductMutations(graphene.ObjectType):
 
     product_create = ProductCreate.Field()
     product_delete = ProductDelete.Field()
+    product_bulk_create = ProductBulkCreate.Field()
     product_bulk_delete = ProductBulkDelete.Field()
     product_update = ProductUpdate.Field()
+    product_bulk_translate = ProductBulkTranslate.Field()
     product_translate = ProductTranslate.Field()
 
     product_channel_listing_update = ProductChannelListingUpdate.Field()
@@ -574,6 +605,7 @@ class ProductMutations(graphene.ObjectType):
     product_variant_update = ProductVariantUpdate.Field()
     product_variant_set_default = ProductVariantSetDefault.Field()
     product_variant_translate = ProductVariantTranslate.Field()
+    product_variant_bulk_translate = ProductVariantBulkTranslate.Field()
     product_variant_channel_listing_update = ProductVariantChannelListingUpdate.Field()
     product_variant_reorder_attribute_values = (
         ProductVariantReorderAttributeValues.Field()

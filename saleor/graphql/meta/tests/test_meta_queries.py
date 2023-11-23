@@ -1,5 +1,3 @@
-from typing import List
-
 import graphene
 from django.http import HttpResponse
 
@@ -23,7 +21,7 @@ def execute_query(
     client: ApiClient,
     model: ModelWithMetadata,
     model_name: str,
-    permissions: List[Permission] = None,
+    permissions: list[Permission] = None,
 ):
     return client.post_graphql(
         query_str,
@@ -1063,7 +1061,7 @@ query transactionItemMeta($id: ID!){
 
 
 def execute_query_public_metadata_for_transaction_item(
-    client: ApiClient, order: Order, permissions: List[Permission] = None
+    client: ApiClient, order: Order, permissions: list[Permission] = None
 ):
     return execute_query(
         QUERY_TRANSACTION_ITEM_PUBLIC_META, client, order, "Order", permissions
@@ -1173,7 +1171,7 @@ QUERY_PAYMENT_PUBLIC_META = """
 
 
 def execute_query_public_metadata_for_payment(
-    client: ApiClient, payment: Payment, permissions: List[Permission] = None
+    client: ApiClient, payment: Payment, permissions: list[Permission] = None
 ):
     return execute_query(
         QUERY_PAYMENT_PUBLIC_META, client, payment, "Payment", permissions
@@ -2771,7 +2769,7 @@ query transactionItemMeta($id: ID!){
 
 
 def execute_query_private_metadata_for_transaction_item(
-    client: ApiClient, order: Order, permissions: List[Permission] = None
+    client: ApiClient, order: Order, permissions: list[Permission] = None
 ):
     return execute_query(
         QUERY_TRANSACTION_ITEM_PRIVATE_META, client, order, "Order", permissions
@@ -2886,7 +2884,7 @@ QUERY_PAYMENT_PRIVATE_META = """
 
 
 def execute_query_private_metadata_for_payment(
-    client: ApiClient, payment: Payment, permissions: List[Permission] = None
+    client: ApiClient, payment: Payment, permissions: list[Permission] = None
 ):
     return execute_query(
         QUERY_PAYMENT_PRIVATE_META, client, payment, "Payment", permissions
@@ -3745,12 +3743,15 @@ QUERY_SALE_PUBLIC_META = """
 """
 
 
-def test_query_public_meta_for_sale_as_anonymous_user(api_client, sale):
+def test_query_public_meta_for_sale_as_anonymous_user(
+    api_client, promotion_converted_from_sale
+):
     # given
+    sale = promotion_converted_from_sale
     sale.store_value_in_metadata({PUBLIC_KEY: PUBLIC_VALUE})
     sale.save(update_fields=["metadata"])
     variables = {
-        "id": graphene.Node.to_global_id("Sale", sale.pk),
+        "id": graphene.Node.to_global_id("Sale", sale.old_sale_id),
     }
 
     # when
@@ -3760,12 +3761,15 @@ def test_query_public_meta_for_sale_as_anonymous_user(api_client, sale):
     assert_no_permission(response)
 
 
-def test_query_public_meta_for_sale_as_customer(user_api_client, sale):
+def test_query_public_meta_for_sale_as_customer(
+    user_api_client, promotion_converted_from_sale
+):
     # given
+    sale = promotion_converted_from_sale
     sale.store_value_in_metadata({PUBLIC_KEY: PUBLIC_VALUE})
     sale.save(update_fields=["metadata"])
     variables = {
-        "id": graphene.Node.to_global_id("Sale", sale.pk),
+        "id": graphene.Node.to_global_id("Sale", sale.old_sale_id),
     }
 
     # when
@@ -3776,12 +3780,13 @@ def test_query_public_meta_for_sale_as_customer(user_api_client, sale):
 
 
 def test_query_public_meta_for_sale_as_staff(
-    staff_api_client, sale, permission_manage_discounts
+    staff_api_client, promotion_converted_from_sale, permission_manage_discounts
 ):
     # given
+    sale = promotion_converted_from_sale
     sale.store_value_in_metadata({PUBLIC_KEY: PUBLIC_VALUE})
     sale.save(update_fields=["metadata"])
-    variables = {"id": graphene.Node.to_global_id("Sale", sale.pk)}
+    variables = {"id": graphene.Node.to_global_id("Sale", sale.old_sale_id)}
 
     # when
     response = staff_api_client.post_graphql(
@@ -3799,12 +3804,13 @@ def test_query_public_meta_for_sale_as_staff(
 
 
 def test_query_public_meta_for_sale_as_app(
-    app_api_client, sale, permission_manage_discounts
+    app_api_client, promotion_converted_from_sale, permission_manage_discounts
 ):
     # given
+    sale = promotion_converted_from_sale
     sale.store_value_in_metadata({PUBLIC_KEY: PUBLIC_VALUE})
     sale.save(update_fields=["metadata"])
-    variables = {"id": graphene.Node.to_global_id("Sale", sale.pk)}
+    variables = {"id": graphene.Node.to_global_id("Sale", sale.old_sale_id)}
 
     # when
     response = app_api_client.post_graphql(
@@ -3833,10 +3839,13 @@ QUERY_SALE_PRIVATE_META = """
 """
 
 
-def test_query_private_meta_for_sale_as_anonymous_user(api_client, sale):
+def test_query_private_meta_for_sale_as_anonymous_user(
+    api_client, promotion_converted_from_sale
+):
     # given
+    sale = promotion_converted_from_sale
     variables = {
-        "id": graphene.Node.to_global_id("Sale", sale.pk),
+        "id": graphene.Node.to_global_id("Sale", sale.old_sale_id),
     }
 
     # when
@@ -3846,10 +3855,13 @@ def test_query_private_meta_for_sale_as_anonymous_user(api_client, sale):
     assert_no_permission(response)
 
 
-def test_query_private_meta_for_sale_as_customer(user_api_client, sale):
+def test_query_private_meta_for_sale_as_customer(
+    user_api_client, promotion_converted_from_sale
+):
     # given
+    sale = promotion_converted_from_sale
     variables = {
-        "id": graphene.Node.to_global_id("Sale", sale.pk),
+        "id": graphene.Node.to_global_id("Sale", sale.old_sale_id),
     }
 
     # when
@@ -3860,12 +3872,13 @@ def test_query_private_meta_for_sale_as_customer(user_api_client, sale):
 
 
 def test_query_private_meta_for_sale_as_staff(
-    staff_api_client, sale, permission_manage_discounts
+    staff_api_client, promotion_converted_from_sale, permission_manage_discounts
 ):
     # given
+    sale = promotion_converted_from_sale
     sale.store_value_in_private_metadata({PRIVATE_KEY: PRIVATE_VALUE})
     sale.save(update_fields=["private_metadata"])
-    variables = {"id": graphene.Node.to_global_id("Sale", sale.pk)}
+    variables = {"id": graphene.Node.to_global_id("Sale", sale.old_sale_id)}
 
     # when
     response = staff_api_client.post_graphql(
@@ -3883,13 +3896,14 @@ def test_query_private_meta_for_sale_as_staff(
 
 
 def test_query_private_meta_for_sale_as_app(
-    app_api_client, sale, permission_manage_discounts
+    app_api_client, promotion_converted_from_sale, permission_manage_discounts
 ):
     # given
+    sale = promotion_converted_from_sale
     sale.store_value_in_private_metadata({PRIVATE_KEY: PRIVATE_VALUE})
     sale.save(update_fields=["private_metadata"])
     variables = {
-        "id": graphene.Node.to_global_id("Sale", sale.pk),
+        "id": graphene.Node.to_global_id("Sale", sale.old_sale_id),
     }
 
     # when

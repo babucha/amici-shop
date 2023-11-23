@@ -5,10 +5,12 @@ from django.db.models import Exists, OuterRef, Q
 from ....attribute import models as models
 from ....permission.enums import ProductTypePermissions
 from ....product import models as product_models
+from ....webhook.event_types import WebhookEventAsyncType
 from ...core import ResolveInfo
 from ...core.descriptions import ADDED_IN_310
 from ...core.mutations import ModelWithExtRefMutation
 from ...core.types import AttributeError
+from ...core.utils import WebhookEventInfo
 from ...plugins.dataloaders import get_plugin_manager_promise
 from ..types import Attribute, AttributeValue
 from .attribute_update import AttributeValueUpdateInput
@@ -58,6 +60,16 @@ class AttributeValueUpdate(AttributeValueCreate, ModelWithExtRefMutation):
         permissions = (ProductTypePermissions.MANAGE_PRODUCT_TYPES_AND_ATTRIBUTES,)
         error_type_class = AttributeError
         error_type_field = "attribute_errors"
+        webhook_events_info = [
+            WebhookEventInfo(
+                type=WebhookEventAsyncType.ATTRIBUTE_VALUE_UPDATED,
+                description="An attribute value was updated.",
+            ),
+            WebhookEventInfo(
+                type=WebhookEventAsyncType.ATTRIBUTE_UPDATED,
+                description="An attribute was updated.",
+            ),
+        ]
 
     @classmethod
     def clean_input(cls, info: ResolveInfo, instance, data, **kwargs):
@@ -87,6 +99,7 @@ class AttributeValueUpdate(AttributeValueCreate, ModelWithExtRefMutation):
             )
             # SELECT … FOR UPDATE needs to lock rows in a consistent order
             # to avoid deadlocks between updates touching the same rows.
+
             qs = (
                 product_models.Product.objects.select_for_update(of=("self",))
                 .filter(
@@ -94,7 +107,7 @@ class AttributeValueUpdate(AttributeValueCreate, ModelWithExtRefMutation):
                     & (
                         Q(
                             Exists(
-                                instance.productassignments.filter(
+                                instance.productvalueassignment.filter(
                                     product_id=OuterRef("id")
                                 )
                             )

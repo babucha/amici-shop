@@ -238,7 +238,7 @@ def test_product_query_by_invalid_id(
     )
     content = get_graphql_content_from_response(response)
     assert "errors" in content
-    assert content["errors"][0]["message"] == (f"Couldn't resolve id: {id}.")
+    assert content["errors"][0]["message"] == f"Invalid ID: {id}. Expected: Product."
 
 
 QUERY_PRODUCT_BY_ID = """
@@ -290,7 +290,10 @@ def test_product_query_invalid_id(user_api_client, product, channel_USD):
     response = user_api_client.post_graphql(QUERY_PRODUCT_BY_ID, variables)
     content = get_graphql_content_from_response(response)
     assert len(content["errors"]) == 1
-    assert content["errors"][0]["message"] == f"Couldn't resolve id: {product_id}."
+    assert (
+        content["errors"][0]["message"]
+        == f"Invalid ID: {product_id}. Expected: Product."
+    )
     assert content["data"]["product"] is None
 
 
@@ -1363,9 +1366,6 @@ def test_product_restricted_fields_permissions(
     product,
     channel_USD,
 ):
-    """Ensure non-public (restricted) fields are correctly requiring
-    the 'manage_products' permission.
-    """
     query = """
     query Product($id: ID!, $channel: String) {
         product(id: $id, channel: $channel) {
@@ -1409,7 +1409,7 @@ QUERY_GET_PRODUCT_VARIANTS_PRICING = """
 
 
 @pytest.mark.parametrize(
-    "variant_price_amount, api_variant_price",
+    ("variant_price_amount", "api_variant_price"),
     [(200, 200), (0, 0)],
 )
 def test_product_variant_price(
@@ -1660,7 +1660,9 @@ def test_query_product_image_by_invalid_id(
 
     content = get_graphql_content_from_response(response)
     assert len(content["errors"]) == 1
-    assert content["errors"][0]["message"] == f"Couldn't resolve id: {id}."
+    assert (
+        content["errors"][0]["message"] == f"Invalid ID: {id}. Expected: ProductImage."
+    )
     assert content["data"]["product"]["imageById"] is None
 
 
@@ -1767,7 +1769,9 @@ def test_query_product_media_by_invalid_id(
     response = user_api_client.post_graphql(query, variables)
     content = get_graphql_content_from_response(response)
     assert len(content["errors"]) == 1
-    assert content["errors"][0]["message"] == f"Couldn't resolve id: {id}."
+    assert (
+        content["errors"][0]["message"] == f"Invalid ID: {id}. Expected: ProductMedia."
+    )
     assert content["data"]["product"]["mediaById"] is None
 
 
@@ -2043,8 +2047,8 @@ QUERY_PRODUCT_WITH_VARIANT = """
 
 
 @pytest.mark.parametrize(
-    "variant_id, sku, result",
-    ((False, "123", "123"), (True, None, "123")),
+    ("variant_id", "sku", "result"),
+    [(False, "123", "123"), (True, None, "123")],
 )
 def test_product_variant_field_filtering(
     staff_api_client,
@@ -2198,7 +2202,7 @@ def test_query_product_media_sorting_asc(
     media = content["data"]["product"]["media"]
     _, media1 = graphene.Node.from_global_id(media[0]["id"])
     _, media2 = graphene.Node.from_global_id(media[1]["id"])
-    assert media1 < media2
+    assert int(media1) < int(media2)
 
 
 def test_query_product_media_sorting_desc(
@@ -2223,7 +2227,7 @@ def test_query_product_media_sorting_desc(
     media = content["data"]["product"]["media"]
     _, media1 = graphene.Node.from_global_id(media[0]["id"])
     _, media2 = graphene.Node.from_global_id(media[1]["id"])
-    assert media1 > media2
+    assert int(media1) > int(media2)
 
 
 def test_query_product_media_sorting_default(
@@ -2480,3 +2484,51 @@ def test_product_query_by_external_reference(
     assert product_data is not None
     assert product_data["name"] == product.name
     assert product_data["externalReference"] == product.external_reference
+
+
+PRODUCT_TAX_CLASS_QUERY = """
+    query getProduct($id: ID!, $channel: String) {
+        product(id: $id, channel: $channel) {
+            id
+            taxClass {
+                id
+            }
+        }
+    }
+"""
+
+
+def test_product_tax_class_query_by_app(app_api_client, product, channel_USD):
+    # given
+    variables = {
+        "id": graphene.Node.to_global_id("Product", product.id),
+        "channel": channel_USD.slug,
+    }
+
+    # when
+    response = app_api_client.post_graphql(PRODUCT_TAX_CLASS_QUERY, variables)
+
+    # then
+    content = get_graphql_content(response)
+    data = content["data"]
+    assert data["product"]
+    assert data["product"]["id"]
+    assert data["product"]["taxClass"]["id"]
+
+
+def test_product_tax_class_query_by_staff(staff_api_client, product, channel_USD):
+    # given
+    variables = {
+        "id": graphene.Node.to_global_id("Product", product.id),
+        "channel": channel_USD.slug,
+    }
+
+    # when
+    response = staff_api_client.post_graphql(PRODUCT_TAX_CLASS_QUERY, variables)
+
+    # then
+    content = get_graphql_content(response)
+    data = content["data"]
+    assert data["product"]
+    assert data["product"]["id"]
+    assert data["product"]["taxClass"]["id"]

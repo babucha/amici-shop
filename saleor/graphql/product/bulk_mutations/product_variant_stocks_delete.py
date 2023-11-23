@@ -1,13 +1,15 @@
 import graphene
 from django.core.exceptions import ValidationError
-from django.db import transaction
 
 from ....core.tracing import traced_atomic_transaction
 from ....permission.enums import ProductPermissions
 from ....product import models
 from ....warehouse import models as warehouse_models
+from ....webhook.event_types import WebhookEventAsyncType
+from ....webhook.utils import get_webhooks_for_event
 from ...channel import ChannelContext
 from ...core import ResolveInfo
+from ...core.doc_category import DOC_CATEGORY_PRODUCTS
 from ...core.mutations import BaseMutation
 from ...core.types import NonNullList, StockError
 from ...core.validators import validate_one_of_args_is_in_mutation
@@ -39,6 +41,7 @@ class ProductVariantStocksDelete(BaseMutation):
 
     class Meta:
         description = "Delete stocks from product variant."
+        doc_category = DOC_CATEGORY_PRODUCTS
         permissions = (ProductPermissions.MANAGE_PRODUCTS,)
         error_type_class = StockError
         error_type_field = "stock_errors"
@@ -72,8 +75,13 @@ class ProductVariantStocksDelete(BaseMutation):
             product_variant=variant, warehouse__pk__in=warehouses_pks
         )
 
+        webhooks = get_webhooks_for_event(
+            WebhookEventAsyncType.PRODUCT_VARIANT_OUT_OF_STOCK
+        )
         for stock in stocks_to_delete:
-            transaction.on_commit(lambda: manager.product_variant_out_of_stock(stock))
+            cls.call_event(
+                manager.product_variant_out_of_stock, stock, webhooks=webhooks
+            )
 
         stocks_to_delete.delete()
 

@@ -1,8 +1,9 @@
 """Checkout-related ORM models."""
+from collections.abc import Iterable
 from datetime import date
 from decimal import Decimal
 from operator import attrgetter
-from typing import TYPE_CHECKING, Iterable, Optional, Union
+from typing import TYPE_CHECKING, Optional, Union
 from uuid import uuid4
 
 from django.conf import settings
@@ -21,6 +22,7 @@ from ..core.weight import zero_weight
 from ..giftcard.models import GiftCard
 from ..permission.enums import CheckoutPermissions
 from ..shipping.models import ShippingMethod
+from . import CheckoutAuthorizeStatus, CheckoutChargeStatus
 
 if TYPE_CHECKING:
     from django_measurement import Weight
@@ -39,7 +41,7 @@ class Checkout(models.Model):
     """A shopping checkout."""
 
     created_at = models.DateTimeField(auto_now_add=True)
-    last_change = models.DateTimeField(auto_now=True)
+    last_change = models.DateTimeField(auto_now=True, db_index=True)
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         blank=True,
@@ -137,6 +139,20 @@ class Checkout(models.Model):
         max_digits=5, decimal_places=4, default=Decimal("0.0")
     )
 
+    authorize_status = models.CharField(
+        max_length=32,
+        default=CheckoutAuthorizeStatus.NONE,
+        choices=CheckoutAuthorizeStatus.CHOICES,
+        db_index=True,
+    )
+
+    charge_status = models.CharField(
+        max_length=32,
+        default=CheckoutChargeStatus.NONE,
+        choices=CheckoutChargeStatus.CHOICES,
+        db_index=True,
+    )
+
     price_expiration = models.DateTimeField(default=timezone.now)
 
     discount_amount = models.DecimalField(
@@ -183,11 +199,7 @@ class Checkout(models.Model):
         """Return the total balance of the gift cards assigned to the checkout."""
         balance = self.gift_cards.active(  # type: ignore[attr-defined] # problem with django-stubs detecting the correct manager # noqa: E501
             date=date.today()
-        ).aggregate(
-            models.Sum("current_balance_amount")
-        )[
-            "current_balance_amount__sum"
-        ]
+        ).aggregate(models.Sum("current_balance_amount"))["current_balance_amount__sum"]
         if balance is None:
             return zero_money(currency=self.currency)
         return Money(balance, self.currency)
@@ -299,7 +311,7 @@ class CheckoutLine(ModelWithMetadata):
         return not self == other  # pragma: no cover
 
     def __repr__(self):
-        return "CheckoutLine(variant=%r, quantity=%r)" % (self.variant, self.quantity)
+        return f"CheckoutLine(variant={self.variant!r}, quantity={self.quantity!r})"
 
     def __getstate__(self):
         return self.variant, self.quantity

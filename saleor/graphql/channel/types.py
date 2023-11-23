@@ -1,6 +1,6 @@
 import collections
 import itertools
-from typing import TYPE_CHECKING, Dict, List, Type, TypeVar, Union, cast
+from typing import TYPE_CHECKING, TypeVar, Union, cast
 
 import graphene
 from django.db.models import Model
@@ -12,7 +12,12 @@ from promise import Promise
 from ...channel import models
 from ...core.models import ModelWithMetadata
 from ...permission.auth_filters import AuthorizationFilters
-from ...permission.enums import ChannelPermissions, OrderPermissions
+from ...permission.enums import (
+    ChannelPermissions,
+    CheckoutPermissions,
+    OrderPermissions,
+    PaymentPermissions,
+)
 from ..account.enums import CountryCodeEnum
 from ..core import ResolveInfo
 from ..core.descriptions import (
@@ -21,21 +26,37 @@ from ..core.descriptions import (
     ADDED_IN_36,
     ADDED_IN_37,
     ADDED_IN_312,
+    ADDED_IN_313,
+    ADDED_IN_314,
+    ADDED_IN_315,
+    ADDED_IN_316,
+    ADDED_IN_318,
+    DEPRECATED_IN_3X_FIELD,
     PREVIEW_FEATURE,
 )
+from ..core.doc_category import (
+    DOC_CATEGORY_CHECKOUT,
+    DOC_CATEGORY_ORDERS,
+    DOC_CATEGORY_PAYMENTS,
+    DOC_CATEGORY_PRODUCTS,
+)
 from ..core.fields import PermissionsField
-from ..core.types import CountryDisplay, ModelObjectType, NonNullList
+from ..core.scalars import Day, Minute
+from ..core.types import BaseObjectType, CountryDisplay, ModelObjectType, NonNullList
 from ..meta.types import ObjectWithMetadata
 from ..translations.resolvers import resolve_translation
 from ..warehouse.dataloaders import WarehousesByChannelIdLoader
 from ..warehouse.types import Warehouse
 from . import ChannelContext
 from .dataloaders import ChannelWithHasOrdersByIdLoader
-from .enums import AllocationStrategyEnum
+from .enums import (
+    AllocationStrategyEnum,
+    MarkAsPaidStrategyEnum,
+    TransactionFlowStrategyEnum,
+)
 
 if TYPE_CHECKING:
     from ...shipping.models import ShippingZone
-
 
 T = TypeVar("T", bound=Model)
 
@@ -83,7 +104,7 @@ class ChannelContextType(ChannelContextTypeForObjectType[T]):
         if cls._meta.model._meta.proxy:
             model = root._meta.model
         else:
-            model = cast(Type[Model], root._meta.model._meta.concrete_model)
+            model = cast(type[Model], root._meta.model._meta.concrete_model)
 
         return model == cls._meta.model
 
@@ -147,7 +168,7 @@ class ChannelContextTypeWithMetadata(ChannelContextTypeWithMetadataForObjectType
         abstract = True
 
 
-class StockSettings(ObjectType):
+class StockSettings(BaseObjectType):
     allocation_strategy = AllocationStrategyEnum(
         description=(
             "Allocation strategy defines the preference of warehouses "
@@ -157,9 +178,34 @@ class StockSettings(ObjectType):
     )
 
     class Meta:
+        description = "Represents the channel stock settings." + ADDED_IN_37
+        doc_category = DOC_CATEGORY_PRODUCTS
+
+
+class CheckoutSettings(ObjectType):
+    use_legacy_error_flow = graphene.Boolean(
+        required=True,
+        description=(
+            "Default `true`. Determines if the checkout mutations should use legacy "
+            "error flow. In legacy flow, all mutations can raise an exception "
+            "unrelated to the requested action - (e.g. out-of-stock exception when "
+            "updating checkoutShippingAddress.) "
+            "If `false`, the errors will be aggregated in `checkout.problems` field. "
+            "Some of the `problems` can block the finalizing checkout process. "
+            "The legacy flow will be removed in Saleor 4.0. "
+            "The flow with `checkout.problems` will be the default one."
+            + ADDED_IN_315
+            + DEPRECATED_IN_3X_FIELD
+        ),
+    )
+
+    class Meta:
         description = (
-            "Represents the channel stock settings." + ADDED_IN_37 + PREVIEW_FEATURE
+            "Represents the channel-specific checkout settings."
+            + ADDED_IN_315
+            + PREVIEW_FEATURE
         )
+        doc_category = DOC_CATEGORY_CHECKOUT
 
 
 class OrderSettings(ObjectType):
@@ -178,13 +224,72 @@ class OrderSettings(ObjectType):
             "will be fulfilled automatically."
         ),
     )
+    expire_orders_after = Minute(
+        required=False,
+        description=(
+            "Expiration time in minutes. Default null - means do not expire any orders."
+            + ADDED_IN_313
+            + PREVIEW_FEATURE
+        ),
+    )
+
+    mark_as_paid_strategy = MarkAsPaidStrategyEnum(
+        required=True,
+        description=(
+            "Determine what strategy will be used to mark the order as paid. "
+            "Based on the chosen option, the proper object will be created "
+            "and attached to the order when it's manually marked as paid."
+            "\n`PAYMENT_FLOW` - [default option] creates the `Payment` object."
+            "\n`TRANSACTION_FLOW` - creates the `TransactionItem` object."
+            + ADDED_IN_313
+            + PREVIEW_FEATURE
+        ),
+    )
+    delete_expired_orders_after = Day(
+        required=True,
+        description=(
+            "The time in days after expired orders will be deleted."
+            + ADDED_IN_314
+            + PREVIEW_FEATURE
+        ),
+    )
+    allow_unpaid_orders = graphene.Boolean(
+        required=True,
+        description=(
+            "Determine if it is possible to place unpdaid order by calling "
+            "`checkoutComplete` mutation." + ADDED_IN_315 + PREVIEW_FEATURE
+        ),
+    )
+    include_draft_order_in_voucher_usage = graphene.Boolean(
+        required=True,
+        description=(
+            "Determine if voucher applied on draft order should be count toward "
+            "voucher usage." + ADDED_IN_318 + PREVIEW_FEATURE
+        ),
+    )
 
     class Meta:
         description = "Represents the channel-specific order settings."
+        doc_category = DOC_CATEGORY_ORDERS
+
+
+class PaymentSettings(ObjectType):
+    default_transaction_flow_strategy = TransactionFlowStrategyEnum(
+        required=True,
+        description=(
+            "Determine the transaction flow strategy to be used. "
+            "Include the selected option in the payload sent to the payment app, as a "
+            "requested action for the transaction." + ADDED_IN_316 + PREVIEW_FEATURE
+        ),
+    )
+
+    class Meta:
+        description = "Represents the channel-specific payment settings."
+        doc_category = DOC_CATEGORY_PAYMENTS
 
 
 class Channel(ModelObjectType):
-    id = graphene.GlobalID(required=True)
+    id = graphene.GlobalID(required=True, description="The ID of the channel.")
     slug = graphene.String(
         required=True,
         description="Slug of the channel.",
@@ -240,9 +345,7 @@ class Channel(ModelObjectType):
     )
     warehouses = PermissionsField(
         NonNullList(Warehouse),
-        description="List of warehouses assigned to this channel."
-        + ADDED_IN_35
-        + PREVIEW_FEATURE,
+        description="List of warehouses assigned to this channel." + ADDED_IN_35,
         required=True,
         permissions=[
             AuthorizationFilters.AUTHENTICATED_APP,
@@ -251,23 +354,18 @@ class Channel(ModelObjectType):
     )
     countries = NonNullList(
         CountryDisplay,
-        description="List of shippable countries for the channel."
-        + ADDED_IN_36
-        + PREVIEW_FEATURE,
+        description="List of shippable countries for the channel." + ADDED_IN_36,
     )
 
     available_shipping_methods_per_country = graphene.Field(
         NonNullList("saleor.graphql.shipping.types.ShippingMethodsPerCountry"),
         countries=graphene.Argument(NonNullList(CountryCodeEnum)),
         description="Shipping methods that are available for the channel."
-        + ADDED_IN_36
-        + PREVIEW_FEATURE,
+        + ADDED_IN_36,
     )
     stock_settings = PermissionsField(
         StockSettings,
-        description=(
-            "Define the stock setting for this channel." + ADDED_IN_37 + PREVIEW_FEATURE
-        ),
+        description=("Define the stock setting for this channel." + ADDED_IN_37),
         required=True,
         permissions=[
             AuthorizationFilters.AUTHENTICATED_APP,
@@ -284,10 +382,34 @@ class Channel(ModelObjectType):
         ],
     )
 
+    checkout_settings = PermissionsField(
+        CheckoutSettings,
+        description="Channel-specific checkout settings."
+        + ADDED_IN_315
+        + PREVIEW_FEATURE,
+        required=True,
+        permissions=[
+            ChannelPermissions.MANAGE_CHANNELS,
+            CheckoutPermissions.MANAGE_CHECKOUTS,
+        ],
+    )
+    payment_settings = PermissionsField(
+        PaymentSettings,
+        description="Channel-specific payment settings."
+        + ADDED_IN_316
+        + PREVIEW_FEATURE,
+        required=True,
+        permissions=[
+            ChannelPermissions.MANAGE_CHANNELS,
+            PaymentPermissions.HANDLE_PAYMENTS,
+        ],
+    )
+
     class Meta:
         description = "Represents channel."
         model = models.Channel
-        interfaces = [graphene.relay.Node]
+        interfaces = [graphene.relay.Node, ObjectWithMetadata]
+        metadata_since = ADDED_IN_315
 
     @staticmethod
     def resolve_has_orders(root: models.Channel, info: ResolveInfo):
@@ -342,7 +464,7 @@ class Channel(ModelObjectType):
         shipping_zones_loader = ShippingZonesByChannelIdLoader(info.context).load(
             root.id
         )
-        shipping_zone_countries: Dict[int, List[Country]] = collections.defaultdict(
+        shipping_zone_countries: dict[int, list[Country]] = collections.defaultdict(
             list
         )
         requested_countries = data.get("countries", [])
@@ -400,7 +522,7 @@ class Channel(ModelObjectType):
                 _group_shipping_methods_by_country
             )
 
-        def get_shipping_methods(shipping_zones: List["ShippingZone"]):
+        def get_shipping_methods(shipping_zones: list["ShippingZone"]):
             shipping_zones_keys = [shipping_zone.id for shipping_zone in shipping_zones]
             for shipping_zone in shipping_zones:
                 shipping_zone_countries[shipping_zone.id] = shipping_zone.countries
@@ -426,4 +548,23 @@ class Channel(ModelObjectType):
             automatically_fulfill_non_shippable_gift_card=(
                 root.automatically_fulfill_non_shippable_gift_card
             ),
+            expire_orders_after=root.expire_orders_after,
+            mark_as_paid_strategy=root.order_mark_as_paid_strategy,
+            delete_expired_orders_after=root.delete_expired_orders_after.days,
+            include_draft_order_in_voucher_usage=(
+                root.include_draft_order_in_voucher_usage
+            ),
+            allow_unpaid_orders=(root.allow_unpaid_orders),
+        )
+
+    @staticmethod
+    def resolve_checkout_settings(root: models.Channel, _info):
+        return CheckoutSettings(
+            use_legacy_error_flow=root.use_legacy_error_flow_for_checkout
+        )
+
+    @staticmethod
+    def resolve_payment_settings(root: models.Channel, _info):
+        return PaymentSettings(
+            default_transaction_flow_strategy=root.default_transaction_flow_strategy,
         )

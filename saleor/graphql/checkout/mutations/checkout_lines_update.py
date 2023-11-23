@@ -1,10 +1,9 @@
-from typing import Dict, List
-
 import graphene
 from django.forms import ValidationError
 
 from ....checkout.error_codes import CheckoutErrorCode
 from ....warehouse.reservations import is_reservation_enabled
+from ....webhook.event_types import WebhookEventAsyncType
 from ...app.dataloaders import get_app_promise
 from ...checkout.types import CheckoutLine
 from ...core import ResolveInfo
@@ -13,10 +12,11 @@ from ...core.descriptions import (
     ADDED_IN_34,
     ADDED_IN_36,
     DEPRECATED_IN_3X_INPUT,
-    PREVIEW_FEATURE,
 )
+from ...core.doc_category import DOC_CATEGORY_CHECKOUT
 from ...core.scalars import UUID, PositiveDecimal
-from ...core.types import CheckoutError, NonNullList
+from ...core.types import BaseInputObjectType, CheckoutError, NonNullList
+from ...core.utils import WebhookEventInfo
 from ...core.validators import validate_one_of_args_is_in_mutation
 from ...product.types import ProductVariant
 from ...site.dataloaders import get_site_promise
@@ -29,7 +29,7 @@ from .utils import (
 )
 
 
-class CheckoutLineUpdateInput(graphene.InputObjectType):
+class CheckoutLineUpdateInput(BaseInputObjectType):
     variant_id = graphene.ID(
         required=False,
         description=(
@@ -50,13 +50,15 @@ class CheckoutLineUpdateInput(graphene.InputObjectType):
             "with `HANDLE_CHECKOUTS` permission. When the line with the same variant "
             "will be provided multiple times, the last price will be used."
             + ADDED_IN_31
-            + PREVIEW_FEATURE
         ),
     )
     line_id = graphene.ID(
         description="ID of the line." + ADDED_IN_36,
         required=False,
     )
+
+    class Meta:
+        doc_category = DOC_CATEGORY_CHECKOUT
 
 
 class CheckoutLinesUpdate(CheckoutLinesAdd):
@@ -88,8 +90,15 @@ class CheckoutLinesUpdate(CheckoutLinesAdd):
 
     class Meta:
         description = "Updates checkout line in the existing checkout."
+        doc_category = DOC_CATEGORY_CHECKOUT
         error_type_class = CheckoutError
         error_type_field = "checkout_errors"
+        webhook_events_info = [
+            WebhookEventInfo(
+                type=WebhookEventAsyncType.CHECKOUT_UPDATED,
+                description="A checkout was updated.",
+            )
+        ]
 
     @classmethod
     def validate_checkout_lines(
@@ -129,7 +138,6 @@ class CheckoutLinesUpdate(CheckoutLinesAdd):
         checkout_info,
         lines,
         manager,
-        discounts,
         replace,
     ):
         app = get_app_promise(info.context).get()
@@ -158,7 +166,6 @@ class CheckoutLinesUpdate(CheckoutLinesAdd):
             checkout_info,
             lines,
             manager,
-            discounts,
             replace,
         )
 
@@ -185,7 +192,7 @@ class CheckoutLinesUpdate(CheckoutLinesAdd):
         )
 
     @classmethod
-    def _get_variants_from_lines_input(cls, lines: List[Dict]) -> List[ProductVariant]:
+    def _get_variants_from_lines_input(cls, lines: list[dict]) -> list[ProductVariant]:
         """Return list of ProductVariant objects.
 
         Uses variants ids or lines ids provided in CheckoutLineUpdateInput to

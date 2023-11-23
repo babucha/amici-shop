@@ -1,4 +1,4 @@
-from typing import Tuple, Union
+from typing import Union
 
 import graphene
 from django.core.exceptions import ValidationError
@@ -8,12 +8,15 @@ from ....attribute import models as models
 from ....attribute.error_codes import AttributeErrorCode
 from ....core.exceptions import PermissionDenied
 from ....permission.enums import PageTypePermissions, ProductTypePermissions
+from ....webhook.event_types import WebhookEventAsyncType
 from ...core import ResolveInfo
 from ...core.descriptions import ADDED_IN_310, DEPRECATED_IN_3X_INPUT
+from ...core.doc_category import DOC_CATEGORY_ATTRIBUTES
 from ...core.enums import MeasurementUnitsEnum
 from ...core.fields import JSONString
 from ...core.mutations import ModelMutation
-from ...core.types import AttributeError, NonNullList
+from ...core.types import AttributeError, BaseInputObjectType, NonNullList
+from ...core.utils import WebhookEventInfo
 from ...plugins.dataloaders import get_plugin_manager_promise
 from ..descriptions import AttributeDescriptions, AttributeValueDescriptions
 from ..enums import AttributeEntityTypeEnum, AttributeInputTypeEnum, AttributeTypeEnum
@@ -21,7 +24,7 @@ from ..types import Attribute
 from .mixins import AttributeMixin
 
 
-class AttributeValueInput(graphene.InputObjectType):
+class AttributeValueInput(BaseInputObjectType):
     value = graphene.String(description=AttributeValueDescriptions.VALUE)
     rich_text = JSONString(
         description=AttributeValueDescriptions.RICH_TEXT
@@ -45,12 +48,18 @@ class AttributeValueInput(graphene.InputObjectType):
         required=False,
     )
 
+    class Meta:
+        doc_category = DOC_CATEGORY_ATTRIBUTES
+
 
 class AttributeValueCreateInput(AttributeValueInput):
     name = graphene.String(required=True, description=AttributeValueDescriptions.NAME)
 
+    class Meta:
+        doc_category = DOC_CATEGORY_ATTRIBUTES
 
-class AttributeCreateInput(graphene.InputObjectType):
+
+class AttributeCreateInput(BaseInputObjectType):
     input_type = AttributeInputTypeEnum(description=AttributeDescriptions.INPUT_TYPE)
     entity_type = AttributeEntityTypeEnum(description=AttributeDescriptions.ENTITY_TYPE)
     name = graphene.String(required=True, description=AttributeDescriptions.NAME)
@@ -87,6 +96,15 @@ class AttributeCreateInput(graphene.InputObjectType):
         description="External ID of this attribute." + ADDED_IN_310, required=False
     )
 
+    class Meta:
+        doc_category = DOC_CATEGORY_ATTRIBUTES
+        description = (
+            "Represents an input for create of attribute.\n\n"
+            "NOTE: Deprecated fields `filterableInStorefront`, "
+            "`storefrontSearchPosition` and `availableInGrid` are not supported in "
+            "bulk mutations: `attributeBulkCreate`, `attributeBulkUpdate`."
+        )
+
 
 class AttributeCreate(AttributeMixin, ModelMutation):
     # Needed by AttributeMixin,
@@ -106,6 +124,12 @@ class AttributeCreate(AttributeMixin, ModelMutation):
         description = "Creates an attribute."
         error_type_class = AttributeError
         error_type_field = "attribute_errors"
+        webhook_events_info = [
+            WebhookEventInfo(
+                type=WebhookEventAsyncType.ATTRIBUTE_CREATED,
+                description="An attribute was created.",
+            ),
+        ]
 
     @classmethod
     def clean_input(cls, info: ResolveInfo, instance, data, **kwargs):
@@ -128,7 +152,7 @@ class AttributeCreate(AttributeMixin, ModelMutation):
         cls, _root, info: ResolveInfo, /, *, input
     ):
         # check permissions based on attribute type
-        permissions: Union[Tuple[ProductTypePermissions], Tuple[PageTypePermissions]]
+        permissions: Union[tuple[ProductTypePermissions], tuple[PageTypePermissions]]
         if input["type"] == AttributeTypeEnum.PRODUCT_TYPE.value:
             permissions = (ProductTypePermissions.MANAGE_PRODUCT_TYPES_AND_ATTRIBUTES,)
         else:

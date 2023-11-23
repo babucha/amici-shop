@@ -7,7 +7,7 @@ from django.utils.functional import SimpleLazyObject
 from freezegun import freeze_time
 
 from .....attribute.error_codes import AttributeErrorCode
-from .....attribute.models import Attribute
+from .....attribute.models import Attribute, AttributeValue
 from .....core.utils.json_serializer import CustomJsonEncoder
 from .....webhook.event_types import WebhookEventAsyncType
 from .....webhook.payloads import generate_meta, generate_requestor
@@ -437,7 +437,7 @@ UPDATE_ATTRIBUTE_SLUG_MUTATION = """
 
 
 @pytest.mark.parametrize(
-    "input_slug, expected_slug, error_message",
+    ("input_slug", "expected_slug", "error_message"),
     [
         ("test-slug", "test-slug", None),
         ("", "", "Slug value cannot be blank."),
@@ -494,6 +494,7 @@ def test_update_attribute_slug_exists(
 
     second_attribute = Attribute.objects.get(pk=color_attribute.pk)
     second_attribute.pk = None
+    second_attribute.external_reference = None
     second_attribute.slug = "second-attribute"
     second_attribute.save()
 
@@ -524,7 +525,7 @@ def test_update_attribute_slug_exists(
 
 
 @pytest.mark.parametrize(
-    "input_slug, expected_slug, input_name, error_message, error_field",
+    ("input_slug", "expected_slug", "input_name", "error_message", "error_field"),
     [
         ("test-slug", "test-slug", "New name", None, None),
         ("", "", "New name", "Slug value cannot be blank.", "slug"),
@@ -595,8 +596,8 @@ def test_update_attribute_slug_and_name(
 
 
 @pytest.mark.parametrize(
-    "name_1, name_2, error_msg, error_code",
-    (
+    ("name_1", "name_2", "error_msg", "error_code"),
+    [
         (
             "Red color",
             "Red color",
@@ -609,7 +610,13 @@ def test_update_attribute_slug_and_name(
             "Provided values are not unique.",
             AttributeErrorCode.UNIQUE,
         ),
-    ),
+        (
+            "Red color ",
+            "Red color",
+            "Provided values are not unique.",
+            AttributeErrorCode.UNIQUE,
+        ),
+    ],
 )
 def test_update_attribute_and_add_attribute_values_errors(
     staff_api_client,
@@ -811,3 +818,35 @@ def test_update_attribute_with_non_unique_external_reference(
     assert error["field"] == "externalReference"
     assert error["code"] == AttributeErrorCode.UNIQUE.name
     assert error["message"] == "Attribute with this External reference already exists."
+
+
+def test_update_attribute_name_similar_value(
+    staff_api_client,
+    attribute_without_values,
+    permission_manage_product_types_and_attributes,
+):
+    # given
+    query = UPDATE_ATTRIBUTE_MUTATION
+    attribute = attribute_without_values
+    AttributeValue.objects.create(attribute=attribute, name="15", slug="15")
+    name = "1.5"
+    node_id = graphene.Node.to_global_id("Attribute", attribute.id)
+    variables = {
+        "input": {"addValues": [{"name": name}], "removeValues": []},
+        "id": node_id,
+    }
+
+    # when
+    response = staff_api_client.post_graphql(
+        query, variables, permissions=[permission_manage_product_types_and_attributes]
+    )
+
+    # then
+    content = get_graphql_content(response)
+    attribute.refresh_from_db()
+    data = content["data"]["attributeUpdate"]
+    assert len(data["errors"]) == 0
+    values_edges = data["attribute"]["choices"]["edges"]
+    assert len(values_edges) == 2
+    slugs = [node["node"]["slug"] for node in values_edges]
+    assert set(slugs) == {"15", "15-2"}
